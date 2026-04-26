@@ -2,9 +2,9 @@
   <view class="page">
     <!-- Hero 图片区域 -->
     <view class="hero-area">
-      <view class="hero-bg">
-        <image class="hero-photo" :src="item.image" mode="aspectFill" />
-      </view>
+      <scroll-view class="hero-bg" scroll-y :enhanced="true" :show-scrollbar="false">
+        <image class="hero-photo" :src="item.image" mode="widthFix" />
+      </scroll-view>
       <!-- 返回按钮 -->
       <view class="back-btn" @click="goBack">
         <text class="back-icon">←</text>
@@ -220,7 +220,8 @@ const goBack = () => {
 
 .hero-photo {
   width: 100%;
-  height: 100%;
+  display: block;
+  min-height: 100%;
   animation: bounceIn 0.6s ease;
 }
 
@@ -274,7 +275,7 @@ const goBack = () => {
 /* 详情卡片 */
 .detail-scroll {
   flex: 1;
-  margin-top: -60rpx;
+  margin-top: 0;
   position: relative;
   z-index: 10;
   overflow: hidden;
@@ -282,7 +283,7 @@ const goBack = () => {
 
 .detail-card {
   background: #FFFFFF;
-  border-radius: 48rpx 48rpx 0 0;
+  border-radius: 36rpx 36rpx 0 0;
   padding: 56rpx 40rpx 200rpx;
   display: flex;
   flex-direction: column;

@@ -6,9 +6,12 @@
     <!-- 个人资料头部 -->
     <view class="profile-header">
       <view class="avatar-area">
-        <view class="avatar-ring">
-          <text class="avatar-emoji">🧸</text>
-        </view>
+        <button class="avatar-button" open-type="chooseAvatar" @chooseavatar="onChooseAvatar">
+          <view class="avatar-ring">
+            <image v-if="user.avatarUrl" class="avatar-image" :src="user.avatarUrl" mode="aspectFill" />
+            <text v-else class="avatar-emoji">🧸</text>
+          </view>
+        </button>
       </view>
       <text class="username">{{ user.name }}</text>
       <text class="feed-label">已被投喂 {{ user.feedCount }} 次 🥰</text>
@@ -38,7 +41,7 @@
         <!-- 特权兑换券 -->
         <view class="section-head">
           <text class="section-title">特权兑换券 🎁</text>
-          <text class="section-link">查看全部 ></text>
+          <text class="section-link">查看全部 ›</text>
         </view>
 
         <view
@@ -92,13 +95,13 @@
           <view class="setting-row" @click="showAbout">
             <text class="setting-icon">💝</text>
             <text class="setting-label">关于这个App</text>
-            <text class="setting-arrow">></text>
+            <view class="setting-chevron"></view>
           </view>
           <view class="setting-divider"></view>
           <view class="setting-row" @click="clearHistory">
             <text class="setting-icon">🧹</text>
             <text class="setting-label">清除历史记录</text>
-            <text class="setting-arrow">></text>
+            <view class="setting-chevron"></view>
           </view>
           <view class="setting-divider"></view>
           <view class="setting-row">
@@ -136,7 +139,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import store, { clearOrders } from '@/store/index.js'
+import store, { clearOrders, updateUserAvatar } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const user = computed(() => store.user)
@@ -145,6 +148,12 @@ const notifyOn = ref(true)
 
 const showRedeem = ref(false)
 const redeemItem = ref({})
+
+const onChooseAvatar = (e) => {
+  const avatarUrl = e.detail?.avatarUrl
+  if (!avatarUrl) return
+  updateUserAvatar(avatarUrl)
+}
 
 const redeemCoupon = (coupon) => {
   if (!coupon.available) {
@@ -257,6 +266,22 @@ const clearHistory = () => {
   position: relative;
 }
 
+.avatar-button {
+  width: 156rpx;
+  height: 156rpx;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  line-height: 1;
+  overflow: visible;
+}
+
+.avatar-button::after {
+  border: 0;
+}
+
 .avatar-ring {
   width: 144rpx;
   height: 144rpx;
@@ -268,10 +293,16 @@ const clearHistory = () => {
   justify-content: center;
   box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, 0.15);
   animation: bounceIn 0.6s ease;
+  overflow: hidden;
 }
 
 .avatar-emoji {
   font-size: 72rpx;
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
 }
 
 .username {
@@ -524,9 +555,13 @@ const clearHistory = () => {
   color: #4E5969;
 }
 
-.setting-arrow {
-  font-size: 28rpx;
-  color: #C9CDD4;
+.setting-chevron {
+  width: 18rpx;
+  height: 18rpx;
+  border-top: 4rpx solid #C9CDD4;
+  border-right: 4rpx solid #C9CDD4;
+  transform: rotate(45deg);
+  flex-shrink: 0;
 }
 
 .setting-switch {

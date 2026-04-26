@@ -13,7 +13,10 @@
             <text class="greeting-main">今天想吃点什么？</text>
           </view>
           <view class="avatar-wrap" @click="goProfile">
-            <view class="avatar">🧸</view>
+            <view class="avatar">
+              <image v-if="user.avatarUrl" class="avatar-image" :src="user.avatarUrl" mode="aspectFill" />
+              <text v-else class="avatar-emoji">🧸</text>
+            </view>
           </view>
         </view>
 
@@ -42,7 +45,7 @@
         <view class="section anim-item" :style="{ animationDelay: '0.2s' }">
           <view class="section-header">
             <text class="section-title">分类</text>
-            <text class="section-link" @click="goMenu">查看全部 ></text>
+            <text class="section-link" @click="goMenu">查看全部 ›</text>
           </view>
           <view class="cat-row">
             <view
@@ -118,6 +121,7 @@ import TabBar from '@/components/TabBar.vue'
 
 const categories = computed(() => store.categories)
 const menuItems = computed(() => store.menuItems)
+const user = computed(() => store.user)
 
 const greetingText = computed(() => {
   const hour = new Date().getHours()
@@ -251,6 +255,16 @@ const goDetail = (id) => {
   border: 4rpx solid #fff;
   box-shadow: 0 4rpx 12rpx rgba(0,0,0,0.08);
   transition: transform 0.3s ease;
+  overflow: hidden;
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-emoji {
+  font-size: 44rpx;
 }
 
 .avatar:active {

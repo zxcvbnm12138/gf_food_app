@@ -414,7 +414,12 @@ const goBack = () => {
 }
 
 .mi-add-icon {
+  width: 48rpx;
+  height: 48rpx;
+  display: block;
   font-size: 32rpx;
+  line-height: 44rpx;
+  text-align: center;
   color: #FFFFFF;
   font-weight: bold;
 }

@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 
 const ORDERS_STORAGE_KEY = 'gf_food_orders'
+const USER_AVATAR_STORAGE_KEY = 'gf_food_user_avatar'
 
 function readStoredOrders() {
   try {
@@ -18,6 +19,24 @@ function writeStoredOrders(orders) {
     uni.setStorageSync(ORDERS_STORAGE_KEY, orders)
   } catch (error) {
     console.warn('保存订单历史失败', error)
+  }
+}
+
+function readStoredAvatar() {
+  try {
+    if (typeof uni === 'undefined') return ''
+    return uni.getStorageSync(USER_AVATAR_STORAGE_KEY) || ''
+  } catch (error) {
+    return ''
+  }
+}
+
+function writeStoredAvatar(url) {
+  try {
+    if (typeof uni === 'undefined') return
+    uni.setStorageSync(USER_AVATAR_STORAGE_KEY, url)
+  } catch (error) {
+    console.warn('保存头像失败', error)
   }
 }
 
@@ -171,6 +190,7 @@ const store = reactive({
   // 用户信息
   user: {
     name: '小可爱',
+    avatarUrl: readStoredAvatar(),
     feedCount: 23,
     privileges: 5,
     favorites: 8,
@@ -274,6 +294,11 @@ export function createOrderFromCart() {
 export function clearOrders() {
   store.orders.splice(0, store.orders.length)
   writeStoredOrders(store.orders)
+}
+
+export function updateUserAvatar(url) {
+  store.user.avatarUrl = url || ''
+  writeStoredAvatar(store.user.avatarUrl)
 }
 
 export default store
