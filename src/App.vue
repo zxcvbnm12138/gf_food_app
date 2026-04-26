@@ -14,11 +14,9 @@ export default {
 
 <style>
 /* 全局公共样式 */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 page {
   background-color: #F7F8FA;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: #1D2129;
   font-size: 28rpx;
   --primary: #FF4D4F;
