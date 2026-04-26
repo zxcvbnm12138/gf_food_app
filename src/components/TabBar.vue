@@ -5,20 +5,20 @@
         v-for="(tab, index) in tabs"
         :key="tab.name"
         class="tab-item"
-        :class="{ active: currentTab === index }"
+        :class="{ active: props.current === index }"
         @click="switchTab(index)"
       >
-        <view class="tab-icon-wrap" :class="{ active: currentTab === index }">
+        <view class="tab-icon-wrap" :class="{ active: props.current === index }">
           <text class="tab-icon">{{ tab.icon }}</text>
         </view>
-        <text class="tab-label" :class="{ active: currentTab === index }">{{ tab.label }}</text>
+        <text class="tab-label" :class="{ active: props.current === index }">{{ tab.label }}</text>
       </view>
     </view>
   </view>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 
 const props = defineProps({
   current: {
@@ -26,8 +26,6 @@ const props = defineProps({
     default: 0
   }
 })
-
-const currentTab = ref(props.current)
 
 const tabs = [
   { name: 'home', label: '首页', icon: '🏠', path: '/pages/index/index' },
@@ -42,8 +40,7 @@ onMounted(() => {
 })
 
 const switchTab = (index) => {
-  if (currentTab.value === index) return
-  currentTab.value = index
+  if (props.current === index) return
   uni.switchTab({
     url: tabs[index].path,
   })

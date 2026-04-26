@@ -5,6 +5,9 @@
 
     <!-- 顶部搜索栏 -->
     <view class="top-header">
+      <view class="back-btn" @click="goBack">
+        <text class="back-icon">←</text>
+      </view>
       <view class="search-box" @click="toggleSearch">
         <text class="search-icon">🔍</text>
         <input
@@ -86,12 +89,15 @@
     <view class="add-toast" v-if="showAddToast" :class="{ 'toast-show': showAddToast }">
       <text class="add-toast-text">✨ 已加入清单！</text>
     </view>
+
+    <TabBar :current="1" />
   </view>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import store, { addToCart, getCartTotal } from '@/store/index.js'
+import TabBar from '@/components/TabBar.vue'
 
 const searchActive = ref(false)
 const searchText = ref('')
@@ -172,6 +178,15 @@ const goCart = () => {
     url: '/pages/cart/cart',
   })
 }
+
+const goBack = () => {
+  const pages = getCurrentPages()
+  if (pages.length > 1) {
+    uni.navigateBack()
+  } else {
+    uni.switchTab({ url: '/pages/index/index' })
+  }
+}
 </script>
 
 <style scoped>
@@ -192,9 +207,32 @@ const goCart = () => {
 .top-header {
   display: flex;
   align-items: center;
+  gap: 20rpx;
   padding: 0 32rpx;
   height: 88rpx;
   background: #FFFFFF;
+}
+
+.back-btn {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 32rpx;
+  background: #F2F3F5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.back-btn:active {
+  transform: scale(0.92);
+}
+
+.back-icon {
+  font-size: 34rpx;
+  color: #1D2129;
+  font-weight: bold;
 }
 
 .search-box {
@@ -403,7 +441,7 @@ const goCart = () => {
 /* 底部购物车栏 */
 .cart-bar {
   position: fixed;
-  bottom: 20rpx;
+  bottom: 154rpx;
   left: 32rpx;
   right: 32rpx;
   height: 104rpx;
@@ -475,6 +513,6 @@ const goCart = () => {
 }
 
 .list-bottom-spacer {
-  height: 200rpx;
+  height: 320rpx;
 }
 </style>
