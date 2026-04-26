@@ -242,7 +242,7 @@ const clearHistory = () => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #F7F8FA;
+  background: linear-gradient(180deg, #FF4D4F 0, #FF8C9A 360rpx, #F7F8FA 360rpx, #F7F8FA 100%);
   position: relative;
   overflow: hidden;
 }
@@ -250,7 +250,7 @@ const clearHistory = () => {
 .status-bar-p {
   height: var(--status-bar-height, 44px);
   width: 100%;
-  background: linear-gradient(180deg, #FF4D4F 0%, #FF8C9A 100%);
+  background: linear-gradient(180deg, #FF8C9A 100%);
 }
 
 /* 头部 */
