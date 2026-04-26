@@ -12,6 +12,9 @@
             <text class="greeting-sub">{{ greetingText }} ☀️</text>
             <text class="greeting-main">今天想吃点什么？</text>
           </view>
+        </view>
+
+        <view class="avatar-row anim-item" :style="{ animationDelay: '0.08s' }">
           <view class="avatar-wrap" @click="goProfile">
             <view class="avatar">
               <image v-if="user.avatarUrl" class="avatar-image" :src="user.avatarUrl" mode="aspectFill" />
@@ -207,7 +210,7 @@ const goDetail = (id) => {
   padding: 32rpx 40rpx 48rpx;
   display: flex;
   flex-direction: column;
-  gap: 48rpx;
+  gap: 40rpx;
 }
 
 /* 动画入场 */
@@ -218,8 +221,9 @@ const goDetail = (id) => {
 /* 头部 */
 .header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  padding-right: 210rpx;
 }
 
 .hd-left {
@@ -237,6 +241,13 @@ const goDetail = (id) => {
   font-size: 44rpx;
   font-weight: bold;
   color: #1D2129;
+}
+
+.avatar-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -20rpx;
+  padding-right: 210rpx;
 }
 
 .avatar-wrap {
