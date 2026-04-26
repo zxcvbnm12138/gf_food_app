@@ -244,6 +244,7 @@ const clearHistory = () => {
   height: 100vh;
   background: #F7F8FA;
   position: relative;
+  overflow: hidden;
 }
 
 .status-bar-p {

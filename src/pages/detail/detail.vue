@@ -268,6 +268,7 @@ const goBack = () => {
   background: #F7F8FA;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* Hero 区域 */

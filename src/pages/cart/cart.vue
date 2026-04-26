@@ -181,11 +181,13 @@ const goBack = () => {
   height: 100vh;
   background: #F7F8FA;
   position: relative;
+  overflow: hidden;
 }
 
 .status-bar {
   height: var(--status-bar-height, 44px);
   width: 100%;
+  background: #FFFFFF;
 }
 
 /* 标题 */

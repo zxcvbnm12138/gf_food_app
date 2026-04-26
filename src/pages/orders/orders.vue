@@ -251,11 +251,13 @@ const formatMonth = (iso) => `${new Date(iso).getMonth() + 1}月`
   height: 100vh;
   background: #F7F8FA;
   position: relative;
+  overflow: hidden;
 }
 
 .status-bar {
   height: var(--status-bar-height, 44px);
   width: 100%;
+  background: #FFFFFF;
 }
 
 .orders-header {
@@ -292,6 +294,8 @@ const formatMonth = (iso) => `${new Date(iso).getMonth() + 1}月`
   align-items: center;
   justify-content: center;
   gap: 6rpx;
+  margin-right: 150rpx;
+  flex-shrink: 0;
 }
 
 .stat-num {

@@ -196,11 +196,13 @@ const goBack = () => {
   height: 100vh;
   background: #F7F8FA;
   position: relative;
+  overflow: hidden;
 }
 
 .status-bar {
   height: var(--status-bar-height, 44px);
   width: 100%;
+  background: #FFFFFF;
 }
 
 /* 顶部搜索 */
@@ -208,8 +210,8 @@ const goBack = () => {
   display: flex;
   align-items: center;
   gap: 20rpx;
-  padding: 0 32rpx;
-  height: 88rpx;
+  padding: 16rpx 32rpx 8rpx;
+  height: 112rpx;
   background: #FFFFFF;
 }
 
