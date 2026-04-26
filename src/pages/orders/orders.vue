@@ -64,7 +64,7 @@
             </view>
             <view class="item-list">
               <view v-for="item in order.items" :key="`${order.id}-${item.id}-${getOptionsText(item)}`" class="order-item">
-                <text class="item-emoji">{{ item.emoji }}</text>
+                <image class="item-photo" :src="item.image" mode="aspectFill" />
                 <view class="item-info">
                   <text class="item-name">{{ item.name }} × {{ item.qty }}</text>
                   <text class="item-options">{{ getOptionsText(item) }}</text>
@@ -520,15 +520,12 @@ const formatMonth = (iso) => `${new Date(iso).getMonth() + 1}月`
   gap: 18rpx;
 }
 
-.item-emoji {
+.item-photo {
   width: 72rpx;
   height: 72rpx;
   border-radius: 18rpx;
   background: #FFF7E6;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 36rpx;
+  flex-shrink: 0;
 }
 
 .item-info {

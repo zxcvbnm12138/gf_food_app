@@ -50,7 +50,7 @@
             @click="goDetail(item.id)"
           >
             <view class="mi-img">
-              <text class="mi-emoji">{{ item.emoji }}</text>
+              <image class="mi-photo" :src="item.image" mode="aspectFill" />
             </view>
             <view class="mi-info">
               <text class="mi-name">{{ item.name }}</text>
@@ -348,20 +348,19 @@ const goBack = () => {
   width: 160rpx;
   height: 160rpx;
   border-radius: 20rpx;
-  background: linear-gradient(135deg, #FFF1F0 0%, #FFF7E6 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #FFF7E6;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
-.mi-emoji {
-  font-size: 72rpx;
+.mi-photo {
+  width: 100%;
+  height: 100%;
   transition: transform 0.3s ease;
 }
 
-.menu-item:active .mi-emoji {
-  transform: scale(1.15) rotate(-5deg);
+.menu-item:active .mi-photo {
+  transform: scale(1.08);
 }
 
 .mi-info {

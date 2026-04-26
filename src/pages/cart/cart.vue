@@ -23,7 +23,7 @@
           :style="{ animationDelay: (index * 0.08) + 's' }"
         >
           <view class="ci-img">
-            <text class="ci-emoji">{{ item.emoji }}</text>
+            <image class="ci-photo" :src="item.image" mode="aspectFill" />
           </view>
           <view class="ci-info">
             <text class="ci-name">{{ item.name }}</text>
@@ -264,15 +264,14 @@ const goBack = () => {
   width: 128rpx;
   height: 128rpx;
   border-radius: 20rpx;
-  background: linear-gradient(135deg, #FFF1F0 0%, #FFF7E6 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #FFF7E6;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
-.ci-emoji {
-  font-size: 60rpx;
+.ci-photo {
+  width: 100%;
+  height: 100%;
 }
 
 .ci-info {

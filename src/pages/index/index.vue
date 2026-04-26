@@ -73,7 +73,7 @@
               @click="goDetail(item.id)"
             >
               <view class="rec-card-img">
-                <text class="rec-card-emoji">{{ item.emoji }}</text>
+                <image class="rec-card-photo" :src="item.image" mode="aspectFill" />
               </view>
               <view class="rec-card-info">
                 <text class="rec-card-name">{{ item.name }}</text>
@@ -432,19 +432,18 @@ const goDetail = (id) => {
 .rec-card-img {
   width: 100%;
   height: 200rpx;
-  background: linear-gradient(135deg, #FFF1F0 0%, #FFF7E6 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #FFF7E6;
+  overflow: hidden;
 }
 
-.rec-card-emoji {
-  font-size: 80rpx;
+.rec-card-photo {
+  width: 100%;
+  height: 100%;
   transition: transform 0.3s ease;
 }
 
-.rec-card:active .rec-card-emoji {
-  transform: scale(1.15) rotate(-8deg);
+.rec-card:active .rec-card-photo {
+  transform: scale(1.08);
 }
 
 .rec-card-info {

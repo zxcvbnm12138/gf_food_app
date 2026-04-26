@@ -3,7 +3,7 @@
     <!-- Hero 图片区域 -->
     <view class="hero-area">
       <view class="hero-bg">
-        <text class="hero-emoji">{{ item.emoji }}</text>
+        <image class="hero-photo" :src="item.image" mode="aspectFill" />
       </view>
       <!-- 返回按钮 -->
       <view class="back-btn" @click="goBack">
@@ -214,14 +214,13 @@ const goBack = () => {
 .hero-bg {
   width: 100%;
   height: 100%;
-  background: linear-gradient(135deg, #FFE0E0 0%, #FFF7E6 40%, #E6FFFB 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: #FFF7E6;
+  overflow: hidden;
 }
 
-.hero-emoji {
-  font-size: 200rpx;
+.hero-photo {
+  width: 100%;
+  height: 100%;
   animation: bounceIn 0.6s ease;
 }
 
