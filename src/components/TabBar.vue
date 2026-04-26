@@ -18,8 +18,6 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
-
 const props = defineProps({
   current: {
     type: Number,
@@ -33,11 +31,6 @@ const tabs = [
   { name: 'orders', label: '清单总览', icon: '📋', path: '/pages/orders/orders' },
   { name: 'profile', label: '我的', icon: '❤️', path: '/pages/profile/profile' },
 ]
-
-// 隐藏原生tabbar
-onMounted(() => {
-  uni.hideTabBar({ animation: false })
-})
 
 const switchTab = (index) => {
   if (props.current === index) return
