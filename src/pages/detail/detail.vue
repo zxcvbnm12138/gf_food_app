@@ -1,10 +1,18 @@
 <template>
   <view class="page">
     <!-- Hero 图片区域 -->
-    <view class="hero-area">
-      <scroll-view class="hero-bg" scroll-y :enhanced="true" :show-scrollbar="false">
-        <image class="hero-photo" :src="item.image" mode="widthFix" />
-      </scroll-view>
+    <view
+      class="hero-area"
+      :class="{ dragging: isHeroDragging }"
+      :style="heroAreaStyle"
+      @touchstart="startHeroDrag"
+      @touchmove.stop.prevent="moveHeroDrag"
+      @touchend="endHeroDrag"
+      @touchcancel="endHeroDrag"
+    >
+      <view class="hero-bg">
+        <image class="hero-photo" :src="item.image" mode="aspectFit" />
+      </view>
       <!-- 返回按钮 -->
       <view class="back-btn" @click="goBack">
         <text class="back-icon">←</text>
@@ -18,6 +26,13 @@
     <!-- 详情卡片 -->
     <scroll-view class="detail-scroll" scroll-y :enhanced="true" :show-scrollbar="false">
       <view class="detail-card">
+        <view
+          class="detail-drag-handle"
+          @touchstart="startHeroDrag"
+          @touchmove.stop.prevent="moveHeroDrag"
+          @touchend="endHeroDrag"
+          @touchcancel="endHeroDrag"
+        ></view>
         <!-- 标题行 -->
         <view class="title-row">
           <text class="item-name">{{ item.name }}</text>
@@ -114,13 +129,36 @@ const selectedExtras = ref([0])
 const noteText = ref('')
 const isFav = ref(false)
 const showSuccess = ref(false)
+const isHeroDragging = ref(false)
+const heroHeight = ref(500)
+const touchStartY = ref(0)
+const touchStartHeight = ref(500)
+const pxToRpxRatio = ref(2)
+
+const HERO_MIN_HEIGHT = 500
+const HERO_MAX_HEIGHT = 750
 
 const item = computed(() => {
   return store.menuItems.find(m => m.id === itemId.value) || store.menuItems[0]
 })
 
+const heroAreaStyle = computed(() => {
+  return {
+    height: `${heroHeight.value}rpx`,
+  }
+})
+
 // 页面加载时获取参数
 onMounted(() => {
+  try {
+    const systemInfo = uni.getSystemInfoSync()
+    if (systemInfo.windowWidth) {
+      pxToRpxRatio.value = 750 / systemInfo.windowWidth
+    }
+  } catch (error) {
+    pxToRpxRatio.value = 2
+  }
+
   const pages = getCurrentPages()
   const currentPage = pages[pages.length - 1]
   // #ifdef H5
@@ -159,6 +197,35 @@ const changeQty = (delta) => {
   if (next >= 1 && next <= 99) {
     quantity.value = next
   }
+}
+
+const clampHeroHeight = (height) => {
+  return Math.max(HERO_MIN_HEIGHT, Math.min(HERO_MAX_HEIGHT, height))
+}
+
+const getTouchY = (event) => {
+  const touch = event.touches?.[0] || event.changedTouches?.[0]
+  return touch?.clientY || 0
+}
+
+const startHeroDrag = (event) => {
+  isHeroDragging.value = true
+  touchStartY.value = getTouchY(event)
+  touchStartHeight.value = heroHeight.value
+}
+
+const moveHeroDrag = (event) => {
+  if (!isHeroDragging.value) return
+  const deltaPx = getTouchY(event) - touchStartY.value
+  const deltaRpx = deltaPx * pxToRpxRatio.value
+  heroHeight.value = clampHeroHeight(touchStartHeight.value + deltaRpx)
+}
+
+const endHeroDrag = () => {
+  if (!isHeroDragging.value) return
+  isHeroDragging.value = false
+  const midpoint = HERO_MIN_HEIGHT + ((HERO_MAX_HEIGHT - HERO_MIN_HEIGHT) / 2)
+  heroHeight.value = heroHeight.value >= midpoint ? HERO_MAX_HEIGHT : HERO_MIN_HEIGHT
 }
 
 const toggleFav = () => {
@@ -207,8 +274,12 @@ const goBack = () => {
 .hero-area {
   position: relative;
   width: 100%;
-  height: 500rpx;
   flex-shrink: 0;
+  transition: height 0.25s ease;
+}
+
+.hero-area.dragging {
+  transition: none;
 }
 
 .hero-bg {
@@ -220,8 +291,8 @@ const goBack = () => {
 
 .hero-photo {
   width: 100%;
+  height: 100%;
   display: block;
-  min-height: 100%;
   animation: bounceIn 0.6s ease;
 }
 
@@ -284,12 +355,21 @@ const goBack = () => {
 .detail-card {
   background: #FFFFFF;
   border-radius: 36rpx 36rpx 0 0;
-  padding: 56rpx 40rpx 200rpx;
+  padding: 24rpx 40rpx 200rpx;
   display: flex;
   flex-direction: column;
   gap: 40rpx;
   box-shadow: 0 -16rpx 40rpx rgba(0, 0, 0, 0.04);
   animation: slideUp 0.4s ease;
+}
+
+.detail-drag-handle {
+  width: 96rpx;
+  height: 10rpx;
+  border-radius: 5rpx;
+  background: #E5E6EB;
+  align-self: center;
+  margin-bottom: -8rpx;
 }
 
 .title-row {
