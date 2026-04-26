@@ -1,280 +1,563 @@
 <template>
-  <view class="container">
-    <!-- Header -->
-    <view class="header">
-      <view class="greeting">
-        <text class="greeting-sub">早安宝贝，</text>
-        <text class="greeting-main">今天吃点什么？</text>
-      </view>
-      <image class="avatar" src="/static/avatar-placeholder.png" mode="aspectFill"></image>
-    </view>
+  <view class="page">
+    <!-- 顶部状态栏占位 -->
+    <view class="status-bar"></view>
 
-    <!-- Weather Tip -->
-    <view class="tip-card glass-panel">
-      <text class="tip-icon">🌧️</text>
-      <text class="tip-text">今天下雨，来点热乎乎的奶茶暖暖手吧~</text>
-    </view>
-
-    <!-- Random Picker (The core feature) -->
-    <view class="picker-section">
-      <view class="picker-card" @click="handleRandomPick">
-        <view class="picker-content">
-          <text class="picker-title">纠结星人专属</text>
-          <text class="picker-subtitle">不知道吃啥？点我扭一下！</text>
+    <!-- 可滚动内容区 -->
+    <scroll-view class="scroll-wrapper" scroll-y :enhanced="true" :show-scrollbar="false">
+      <view class="wrapper">
+        <!-- 顶部问候 + 头像 -->
+        <view class="header anim-item" :style="{ animationDelay: '0.05s' }">
+          <view class="hd-left">
+            <text class="greeting-sub">{{ greetingText }} ☀️</text>
+            <text class="greeting-main">今天想吃点什么？</text>
+          </view>
+          <view class="avatar-wrap" @click="goProfile">
+            <view class="avatar">🧸</view>
+          </view>
         </view>
-        <view class="gacha-machine">
-          <text class="gacha-emoji">🎰</text>
+
+        <!-- 搜索栏 -->
+        <view class="search-bar anim-item" :style="{ animationDelay: '0.1s' }" @click="goMenu">
+          <text class="search-icon">🔍</text>
+          <text class="search-placeholder">搜索你想吃的美食...</text>
+        </view>
+
+        <!-- 纠结星人专属随机抽取 -->
+        <view
+          class="picker-card anim-item"
+          :style="{ animationDelay: '0.15s' }"
+          :class="{ 'picker-shaking': isShaking }"
+        >
+          <view class="picker-left">
+            <text class="picker-title">🎲 纠结星人专属</text>
+            <text class="picker-desc">不知道吃啥？帮你随机抽一个！</text>
+          </view>
+          <view class="picker-btn" @click="handleRandomPick">
+            <text class="picker-btn-text" :class="{ spinning: isSpinning }">GO!</text>
+          </view>
+        </view>
+
+        <!-- 分类 -->
+        <view class="section anim-item" :style="{ animationDelay: '0.2s' }">
+          <view class="section-header">
+            <text class="section-title">分类</text>
+            <text class="section-link" @click="goMenu">查看全部 ></text>
+          </view>
+          <view class="cat-row">
+            <view
+              v-for="(cat, i) in categories"
+              :key="cat.id"
+              class="cat-item"
+              @click="goMenuCategory(cat.id)"
+            >
+              <view class="cat-icon-bg" :style="{ background: cat.color }">
+                <text class="cat-emoji">{{ cat.emoji }}</text>
+              </view>
+              <text class="cat-name">{{ cat.name }}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 今日主厨推荐 -->
+        <view class="section anim-item" :style="{ animationDelay: '0.25s' }">
+          <view class="section-header">
+            <text class="section-title">今日主厨推荐</text>
+            <text class="section-link" @click="refreshRecommend">换一批 🔄</text>
+          </view>
+          <view class="rec-row">
+            <view
+              v-for="item in recommendItems"
+              :key="item.id"
+              class="rec-card"
+              @click="goDetail(item.id)"
+            >
+              <view class="rec-card-img">
+                <text class="rec-card-emoji">{{ item.emoji }}</text>
+              </view>
+              <view class="rec-card-info">
+                <text class="rec-card-name">{{ item.name }}</text>
+                <text class="rec-card-price">❤️ {{ item.price }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <!-- 底部安全间距 -->
+        <view class="bottom-spacer"></view>
+      </view>
+    </scroll-view>
+
+    <!-- 随机抽取结果弹窗 -->
+    <view class="modal-overlay" v-if="showPickResult" @click="showPickResult = false">
+      <view class="modal-card" @click.stop>
+        <text class="modal-emoji">🎉</text>
+        <text class="modal-title">恭喜抽中！</text>
+        <text class="modal-item-name">{{ pickedItem.name }}</text>
+        <text class="modal-item-desc">{{ pickedItem.desc }}</text>
+        <view class="modal-actions">
+          <view class="modal-btn secondary" @click="handleRandomPick">
+            <text class="modal-btn-text secondary">再扭一次</text>
+          </view>
+          <view class="modal-btn primary" @click="goPickedDetail">
+            <text class="modal-btn-text primary">去看看</text>
+          </view>
         </view>
       </view>
     </view>
 
-    <!-- Categories -->
-    <view class="section-title">
-      <text>专属分类</text>
-    </view>
-    <view class="category-grid">
-      <view class="category-item cat-favorite">
-        <text class="cat-icon">💖</text>
-        <text class="cat-text">你的最爱</text>
-      </view>
-      <view class="category-item cat-carb">
-        <text class="cat-icon">🍰</text>
-        <text class="cat-text">碳水快乐</text>
-      </view>
-      <view class="category-item cat-healthy">
-        <text class="cat-icon">🥗</text>
-        <text class="cat-text">轻食无负担</text>
-      </view>
-      <view class="category-item cat-comfort glass-panel">
-        <text class="cat-icon">🍵</text>
-        <text class="cat-text">暖呼呼特供</text>
-      </view>
-    </view>
-
-    <!-- Featured -->
-    <view class="section-title">
-      <text>今日主厨推荐</text>
-    </view>
-    <view class="featured-card">
-      <image class="featured-img" src="/static/featured-placeholder.png" mode="aspectFill"></image>
-      <view class="featured-info">
-        <text class="featured-name">草莓甜心蛋糕</text>
-        <text class="featured-desc">甜度刚刚好，就像你一样 🍓</text>
-      </view>
-    </view>
-    
-    <!-- Bottom Spacing -->
-    <view class="bottom-spacer"></view>
+    <!-- 自定义TabBar -->
+    <TabBar :current="0" />
   </view>
 </template>
 
 <script setup>
+import { ref, computed, onMounted } from 'vue'
+import store from '@/store/index.js'
+import TabBar from '@/components/TabBar.vue'
+
+const categories = computed(() => store.categories)
+const menuItems = computed(() => store.menuItems)
+
+const greetingText = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 6) return '夜深了宝贝'
+  if (hour < 11) return '早安宝贝'
+  if (hour < 14) return '午安宝贝'
+  if (hour < 18) return '下午好宝贝'
+  return '晚上好宝贝'
+})
+
+// 推荐菜品
+const recommendIndices = ref([0, 1])
+const recommendItems = computed(() => {
+  return recommendIndices.value.map(i => menuItems.value[i])
+})
+
+const refreshRecommend = () => {
+  const len = menuItems.value.length
+  const shuffled = Array.from({ length: len }, (_, i) => i).sort(() => Math.random() - 0.5)
+  recommendIndices.value = shuffled.slice(0, 2)
+}
+
+// 随机抽取
+const isShaking = ref(false)
+const isSpinning = ref(false)
+const showPickResult = ref(false)
+const pickedItem = ref(menuItems.value[0])
+
 const handleRandomPick = () => {
-  uni.showToast({
-    title: '正在召唤美食...',
-    icon: 'loading',
-    duration: 1500
-  });
+  showPickResult.value = false
+  isShaking.value = true
+  isSpinning.value = true
+
   setTimeout(() => {
-    uni.showModal({
-      title: '✨ 扭蛋结果',
-      content: '恭喜抽中：【芋泥波波奶茶】！要不要来一杯？',
-      confirmText: '加入清单',
-      confirmColor: '#FF8C9A',
-      cancelText: '再扭一次'
-    });
-  }, 1500);
-};
+    isShaking.value = false
+    isSpinning.value = false
+    const idx = Math.floor(Math.random() * menuItems.value.length)
+    pickedItem.value = menuItems.value[idx]
+    showPickResult.value = true
+  }, 1200)
+}
+
+const goPickedDetail = () => {
+  showPickResult.value = false
+  uni.navigateTo({
+    url: `/pages/detail/detail?id=${pickedItem.value.id}`,
+  })
+}
+
+// 导航
+const goMenu = () => uni.switchTab({ url: '/pages/menu/menu' })
+const goProfile = () => uni.switchTab({ url: '/pages/profile/profile' })
+
+const goMenuCategory = (catId) => {
+  uni.switchTab({ url: '/pages/menu/menu' })
+}
+
+const goDetail = (id) => {
+  uni.navigateTo({
+    url: `/pages/detail/detail?id=${id}`,
+  })
+}
 </script>
 
 <style scoped>
-.container {
-  padding: 40rpx 32rpx;
+.page {
+  position: relative;
   min-height: 100vh;
+  background: #F7F8FA;
 }
 
+.status-bar {
+  height: var(--status-bar-height, 44px);
+  width: 100%;
+}
+
+.scroll-wrapper {
+  height: calc(100vh - var(--status-bar-height, 44px));
+  width: 100%;
+}
+
+.wrapper {
+  padding: 32rpx 40rpx 48rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 48rpx;
+}
+
+/* 动画入场 */
+.anim-item {
+  animation: fadeInUp 0.5s ease both;
+}
+
+/* 头部 */
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 40rpx;
-  padding-top: 20rpx;
 }
 
-.greeting {
+.hd-left {
   display: flex;
   flex-direction: column;
+  gap: 8rpx;
 }
 
 .greeting-sub {
   font-size: 28rpx;
-  color: #8C7A80;
-  margin-bottom: 8rpx;
+  color: #86909C;
 }
 
 .greeting-main {
   font-size: 44rpx;
   font-weight: bold;
-  color: #FF8C9A;
+  color: #1D2129;
+}
+
+.avatar-wrap {
+  position: relative;
 }
 
 .avatar {
-  width: 96rpx;
-  height: 96rpx;
+  width: 88rpx;
+  height: 88rpx;
   border-radius: 50%;
-  background-color: #FFF3A1;
-  border: 4rpx solid #fff;
-}
-
-.tip-card {
+  background: #FFF3A1;
   display: flex;
   align-items: center;
-  padding: 24rpx;
-  border-radius: 24rpx;
-  margin-bottom: 40rpx;
+  justify-content: center;
+  font-size: 44rpx;
+  border: 4rpx solid #fff;
+  box-shadow: 0 4rpx 12rpx rgba(0,0,0,0.08);
+  transition: transform 0.3s ease;
 }
 
-.tip-icon {
-  font-size: 40rpx;
-  margin-right: 16rpx;
+.avatar:active {
+  transform: scale(0.92);
 }
 
-.tip-text {
-  font-size: 26rpx;
-  color: #8C7A80;
+/* 搜索 */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  background: #FFFFFF;
+  border-radius: 40rpx;
+  height: 80rpx;
+  padding: 0 32rpx;
+  border: 2rpx solid #E5E6EB;
+  transition: all 0.3s ease;
 }
 
-.picker-section {
-  margin-bottom: 40rpx;
+.search-bar:active {
+  transform: scale(0.98);
+  border-color: #FF4D4F;
 }
 
+.search-icon {
+  font-size: 32rpx;
+}
+
+.search-placeholder {
+  font-size: 28rpx;
+  color: #86909C;
+}
+
+/* 随机抽取卡片 */
 .picker-card {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  background: linear-gradient(135deg, #FF8C9A 0%, #FFB6C1 100%);
-  padding: 40rpx 32rpx;
+  justify-content: space-between;
+  padding: 40rpx;
   border-radius: 32rpx;
-  box-shadow: 0 16rpx 32rpx rgba(255, 140, 154, 0.3);
+  background: linear-gradient(135deg, #FF4D4F 0%, #FF8C9A 100%);
+  box-shadow: 0 16rpx 40rpx rgba(255, 77, 79, 0.25);
+  gap: 32rpx;
+  transition: transform 0.3s ease;
 }
 
-.picker-content {
+.picker-card:active {
+  transform: scale(0.98);
+}
+
+.picker-shaking {
+  animation: shake 0.6s ease-in-out 2;
+}
+
+.picker-left {
   display: flex;
   flex-direction: column;
+  gap: 12rpx;
+  flex: 1;
 }
 
 .picker-title {
-  color: #fff;
   font-size: 36rpx;
   font-weight: bold;
-  margin-bottom: 8rpx;
+  color: #FFFFFF;
 }
 
-.picker-subtitle {
-  color: rgba(255, 255, 255, 0.9);
+.picker-desc {
   font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.8);
 }
 
-.gacha-machine {
-  width: 96rpx;
-  height: 96rpx;
-  background: #fff;
-  border-radius: 50%;
+.picker-btn {
+  width: 128rpx;
+  height: 64rpx;
+  background: #FFFFFF;
+  border-radius: 32rpx;
   display: flex;
-  justify-content: center;
   align-items: center;
-  box-shadow: 0 8rpx 16rpx rgba(0,0,0,0.1);
+  justify-content: center;
+  transition: transform 0.2s ease;
 }
 
-.gacha-emoji {
-  font-size: 48rpx;
+.picker-btn:active {
+  transform: scale(0.9);
+}
+
+.picker-btn-text {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #FF4D4F;
+}
+
+.picker-btn-text.spinning {
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+/* 分类区域 */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .section-title {
   font-size: 32rpx;
   font-weight: bold;
-  color: #5C4B51;
-  margin-bottom: 24rpx;
+  color: #1D2129;
 }
 
-.category-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24rpx;
-  margin-bottom: 40rpx;
+.section-link {
+  font-size: 24rpx;
+  color: #86909C;
 }
 
-.category-item {
+.cat-row {
+  display: flex;
+  justify-content: space-around;
+  width: 100%;
+}
+
+.cat-item {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 16rpx;
+  transition: transform 0.2s ease;
+}
+
+.cat-item:active {
+  transform: scale(0.92);
+}
+
+.cat-icon-bg {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 24rpx;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 32rpx 0;
-  border-radius: 32rpx;
 }
 
-.cat-icon {
-  font-size: 64rpx;
-  margin-bottom: 16rpx;
+.cat-emoji {
+  font-size: 48rpx;
 }
 
-.cat-text {
-  font-size: 28rpx;
-  font-weight: bold;
+.cat-name {
+  font-size: 24rpx;
+  color: #4E5969;
 }
 
-.cat-favorite {
-  background-color: #FF8C9A;
-  color: #fff;
+/* 推荐卡片 */
+.rec-row {
+  display: flex;
+  gap: 24rpx;
 }
 
-.cat-carb {
-  background-color: #FFF3A1;
-  color: #5C4B51;
-}
-
-.cat-healthy {
-  background-color: #A8E6CF;
-  color: #5C4B51;
-}
-
-.cat-comfort {
-  background-color: #fff;
-  color: #5C4B51;
-}
-
-.featured-card {
-  background: #fff;
-  border-radius: 32rpx;
+.rec-card {
+  flex: 1;
+  background: #FFFFFF;
+  border-radius: 24rpx;
   overflow: hidden;
-  box-shadow: 0 16rpx 48rpx rgba(0,0,0,0.05);
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
-.featured-img {
+.rec-card:active {
+  transform: scale(0.96);
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.08);
+}
+
+.rec-card-img {
   width: 100%;
-  height: 320rpx;
-  background-color: #FFF3A1;
+  height: 200rpx;
+  background: linear-gradient(135deg, #FFF1F0 0%, #FFF7E6 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.featured-info {
-  padding: 24rpx 32rpx;
+.rec-card-emoji {
+  font-size: 80rpx;
+  transition: transform 0.3s ease;
+}
+
+.rec-card:active .rec-card-emoji {
+  transform: scale(1.15) rotate(-8deg);
+}
+
+.rec-card-info {
+  padding: 20rpx;
   display: flex;
   flex-direction: column;
+  gap: 8rpx;
 }
 
-.featured-name {
-  font-size: 32rpx;
-  font-weight: bold;
-  color: #5C4B51;
-  margin-bottom: 8rpx;
-}
-
-.featured-desc {
+.rec-card-name {
   font-size: 26rpx;
-  color: #8C7A80;
+  font-weight: bold;
+  color: #1D2129;
+}
+
+.rec-card-price {
+  font-size: 24rpx;
+  font-weight: bold;
+  color: #FF4D4F;
+}
+
+/* 模态弹窗 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.25s ease;
+}
+
+.modal-card {
+  width: 600rpx;
+  background: #FFFFFF;
+  border-radius: 32rpx;
+  padding: 60rpx 40rpx 40rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20rpx;
+  animation: bounceIn 0.5s ease;
+}
+
+.modal-emoji {
+  font-size: 100rpx;
+}
+
+.modal-title {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #1D2129;
+}
+
+.modal-item-name {
+  font-size: 40rpx;
+  font-weight: bold;
+  color: #FF4D4F;
+}
+
+.modal-item-desc {
+  font-size: 26rpx;
+  color: #86909C;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 20rpx;
+  width: 100%;
+  margin-top: 20rpx;
+}
+
+.modal-btn {
+  flex: 1;
+  height: 80rpx;
+  border-radius: 40rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.modal-btn:active {
+  transform: scale(0.95);
+}
+
+.modal-btn.primary {
+  background: #FF4D4F;
+}
+
+.modal-btn.secondary {
+  background: #F7F8FA;
+}
+
+.modal-btn-text.primary {
+  color: #FFFFFF;
+  font-weight: bold;
+  font-size: 28rpx;
+}
+
+.modal-btn-text.secondary {
+  color: #4E5969;
+  font-weight: bold;
+  font-size: 28rpx;
 }
 
 .bottom-spacer {
-  height: 120rpx;
+  height: 160rpx;
 }
 </style>

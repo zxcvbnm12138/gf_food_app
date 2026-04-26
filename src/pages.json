@@ -1,16 +1,73 @@
 {
-	"pages": [ //pages数组中第一项表示应用启动页，参考：https://uniapp.dcloud.io/collocation/pages
+	"pages": [
 		{
 			"path": "pages/index/index",
 			"style": {
-				"navigationBarTitleText": "uni-app"
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "首页"
+			}
+		},
+		{
+			"path": "pages/menu/menu",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "点餐"
+			}
+		},
+		{
+			"path": "pages/detail/detail",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "详情"
+			}
+		},
+		{
+			"path": "pages/cart/cart",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "投喂清单"
+			}
+		},
+		{
+			"path": "pages/orders/orders",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "清单总览"
+			}
+		},
+		{
+			"path": "pages/profile/profile",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "我的"
 			}
 		}
 	],
 	"globalStyle": {
 		"navigationBarTextStyle": "black",
-		"navigationBarTitleText": "uni-app",
-		"navigationBarBackgroundColor": "#F8F8F8",
-		"backgroundColor": "#F8F8F8"
+		"navigationBarTitleText": "投喂小厨房",
+		"navigationBarBackgroundColor": "#F7F8FA",
+		"backgroundColor": "#F7F8FA"
+	},
+	"tabBar": {
+		"custom": true,
+		"list": [
+			{
+				"pagePath": "pages/index/index",
+				"text": "首页"
+			},
+			{
+				"pagePath": "pages/menu/menu",
+				"text": "点餐"
+			},
+			{
+				"pagePath": "pages/orders/orders",
+				"text": "清单总览"
+			},
+			{
+				"pagePath": "pages/profile/profile",
+				"text": "我的"
+			}
+		]
 	}
 }
