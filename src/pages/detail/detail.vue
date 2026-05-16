@@ -122,7 +122,7 @@
 import { ref, computed, onMounted } from 'vue'
 import store, { addToCart } from '@/store/index.js'
 
-const itemId = ref(1)
+const itemId = ref('')
 const quantity = ref(1)
 const selectedSweet = ref(0)
 const selectedExtras = ref([0])
@@ -139,7 +139,9 @@ const HERO_MIN_HEIGHT = 500
 const HERO_MAX_HEIGHT = 750
 
 const item = computed(() => {
-  return store.menuItems.find(m => m.id === itemId.value) || store.menuItems[0]
+  // 支持云数据库 _id（字符串）和本地 id（数字）
+  const id = itemId.value
+  return store.menuItems.find(m => (m._id === id || String(m.id) === String(id) || m._id === id)) || store.menuItems[0] || {}
 })
 
 const heroAreaStyle = computed(() => {
@@ -163,18 +165,18 @@ onMounted(() => {
   const currentPage = pages[pages.length - 1]
   // #ifdef H5
   const url = window.location.href
-  const match = url.match(/[?&]id=(\d+)/)
+  const match = url.match(/[?&]id=([^&]+)/)
   if (match) {
-    itemId.value = parseInt(match[1])
+    itemId.value = match[1]
   }
   // #endif
   // #ifndef H5
   if (currentPage && currentPage.$page && currentPage.$page.options) {
     const opts = currentPage.$page.options
-    if (opts.id) itemId.value = parseInt(opts.id)
+    if (opts.id) itemId.value = opts.id
   } else if (currentPage && currentPage.options) {
     const opts = currentPage.options
-    if (opts.id) itemId.value = parseInt(opts.id)
+    if (opts.id) itemId.value = opts.id
   }
   // #endif
 })

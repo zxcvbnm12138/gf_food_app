@@ -109,6 +109,18 @@
             <text class="setting-label">通知设置</text>
             <switch class="setting-switch" :checked="notifyOn" @change="toggleNotify" color="#FF4D4F" />
           </view>
+          <view class="setting-divider"></view>
+          <view class="setting-row" @click="switchToChef">
+            <text class="setting-icon">👨‍🍳</text>
+            <text class="setting-label">切换到主厨端</text>
+            <view class="setting-chevron"></view>
+          </view>
+          <view class="setting-divider"></view>
+          <view class="setting-row" @click="doLogout">
+            <text class="setting-icon">🚪</text>
+            <text class="setting-label">退出登录</text>
+            <view class="setting-chevron"></view>
+          </view>
         </view>
 
         <view class="profile-spacer"></view>
@@ -139,7 +151,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import store, { clearOrders, updateUserAvatar } from '@/store/index.js'
+import store, { clearOrders, updateUserAvatar, setRole, clearRole, clearLoginState } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const user = computed(() => store.user)
@@ -235,6 +247,17 @@ const clearHistory = () => {
     }
   })
 }
+
+const switchToChef = () => {
+  setRole('chef')
+  uni.switchTab({ url: '/pages/chef/dashboard' })
+}
+
+const doLogout = () => {
+  clearLoginState()
+  clearRole()
+  uni.reLaunch({ url: '/pages/login/login' })
+}
 </script>
 
 <style scoped>
@@ -250,7 +273,7 @@ const clearHistory = () => {
 .status-bar-p {
   height: var(--status-bar-height, 44px);
   width: 100%;
-  background: linear-gradient(180deg, #FF8C9A 100%);
+  background: #FF4D4F 100%;
 }
 
 /* 头部 */

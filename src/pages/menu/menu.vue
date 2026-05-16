@@ -44,10 +44,10 @@
           
           <view
             v-for="(item, index) in filteredItems"
-            :key="item.id"
+            :key="item._id || item.id"
             class="menu-item"
             :style="{ animationDelay: (index * 0.06) + 's' }"
-            @click="goDetail(item.id)"
+            @click="goDetail(item._id || item.id)"
           >
             <view class="mi-img">
               <image class="mi-photo" :src="item.image" mode="aspectFill" />
@@ -95,8 +95,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import store, { addToCart, getCartTotal } from '@/store/index.js'
+import { ref, computed, onMounted } from 'vue'
+import store, { addToCart, getCartTotal, loadMenuFromCloud, getAvailableItems } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const searchActive = ref(false)
@@ -105,9 +105,17 @@ const activeCatIndex = ref(0)
 const showAddToast = ref(false)
 
 const sideCategories = computed(() => store.sideCategories)
-const menuItems = computed(() => store.menuItems)
+// 只显示上架的菜品
+const menuItems = computed(() => getAvailableItems())
 
 const cartTotal = computed(() => getCartTotal())
+
+// 加载菜品
+onMounted(async () => {
+  if (!store.menuLoaded) {
+    await loadMenuFromCloud()
+  }
+})
 
 const categoryMap = {
   0: null,  // 热销 = 全部

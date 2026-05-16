@@ -1,6 +1,13 @@
 {
 	"pages": [
 		{
+			"path": "pages/login/login",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "选择身份"
+			}
+		},
+		{
 			"path": "pages/index/index",
 			"style": {
 				"navigationStyle": "custom",
@@ -45,6 +52,38 @@
 				"backgroundColorTop": "#FF4D4F",
 				"backgroundColor": "#FF4D4F"
 			}
+		},
+		{
+			"path": "pages/chef/dashboard",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "接单中心"
+			}
+		},
+		{
+			"path": "pages/chef/orders",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "订单管理"
+			}
+		},
+		{
+			"path": "pages/chef/menu-manage",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "菜品管理"
+			}
+		},
+		{
+			"path": "pages/chef/profile",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "主厨中心",
+				"navigationBarTextStyle": "white",
+				"navigationBarBackgroundColor": "#4080FF",
+				"backgroundColorTop": "#4080FF",
+				"backgroundColor": "#4080FF"
+			}
 		}
 	],
 	"globalStyle": {
@@ -71,6 +110,22 @@
 			{
 				"pagePath": "pages/profile/profile",
 				"text": "我的"
+			},
+			{
+				"pagePath": "pages/chef/dashboard",
+				"text": "接单中心"
+			},
+			{
+				"pagePath": "pages/chef/orders",
+				"text": "订单管理"
+			},
+			{
+				"pagePath": "pages/chef/menu-manage",
+				"text": "菜品管理"
+			},
+			{
+				"pagePath": "pages/chef/profile",
+				"text": "主厨中心"
 			}
 		]
 	}

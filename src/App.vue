@@ -1,7 +1,29 @@
 <script>
+import { getRole } from '@/store/index.js'
+import { initCloud, checkLogin } from '@/services/cloud.js'
+
 export default {
   onLaunch: function () {
     console.log('App Launch')
+
+    // 初始化微信云开发
+    // #ifdef MP-WEIXIN
+    initCloud()
+    // #endif
+
+    // 检查登录态和角色
+    const loginData = checkLogin()
+    const role = getRole()
+
+    if (loginData && loginData.openid && role) {
+      // 已登录且有角色，跳转到对应端
+      if (role === 'customer') {
+        uni.switchTab({ url: '/pages/index/index' })
+      } else if (role === 'chef') {
+        uni.switchTab({ url: '/pages/chef/dashboard' })
+      }
+    }
+    // 如果没有登录或没有角色，留在 login 页
   },
   onShow: function () {
     console.log('App Show')
@@ -22,6 +44,9 @@ page {
   --primary: #FF4D4F;
   --primary-light: #FF8C9A;
   --primary-bg: #FFF1F0;
+  --accent: #4080FF;
+  --accent-light: #6AA1FF;
+  --accent-bg: #E8F3FF;
   --bg: #F7F8FA;
   --white: #FFFFFF;
   --text-primary: #1D2129;

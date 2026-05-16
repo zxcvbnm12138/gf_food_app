@@ -141,8 +141,8 @@ const removeItem = (index) => {
   })
 }
 
-const handleSubmit = () => {
-  const order = createOrderFromCart()
+const handleSubmit = async () => {
+  const order = await createOrderFromCart()
   if (!order) return
   showOrderSuccess.value = true
   progressWidth.value = 0

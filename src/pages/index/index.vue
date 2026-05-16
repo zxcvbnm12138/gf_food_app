@@ -71,9 +71,9 @@
           <view class="rec-row">
             <view
               v-for="item in recommendItems"
-              :key="item.id"
+              :key="item._id || item.id"
               class="rec-card"
-              @click="goDetail(item.id)"
+              @click="goDetail(item._id || item.id)"
             >
               <view class="rec-card-img">
                 <image class="rec-card-photo" :src="item.image" mode="aspectFill" />
@@ -116,12 +116,27 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import store from '@/store/index.js'
+import store, { loadMenuFromCloud, getAvailableItems } from '@/store/index.js'
+import { checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
 const categories = computed(() => store.categories)
-const menuItems = computed(() => store.menuItems)
+const menuItems = computed(() => getAvailableItems())
 const user = computed(() => store.user)
+
+// 页面显示时加载云端菜品
+onMounted(async () => {
+  // 登录态检查
+  const loginData = checkLogin()
+  if (!loginData || !loginData.openid) {
+    uni.reLaunch({ url: '/pages/login/login' })
+    return
+  }
+  // 加载云端菜品
+  if (!store.menuLoaded) {
+    await loadMenuFromCloud()
+  }
+})
 
 const greetingText = computed(() => {
   const hour = new Date().getHours()
@@ -132,25 +147,35 @@ const greetingText = computed(() => {
   return '晚上好宝贝'
 })
 
-// 推荐菜品
+// 推荐菜品（只从可用菜品中推荐）
 const recommendIndices = ref([0, 1])
 const recommendItems = computed(() => {
-  return recommendIndices.value.map(i => menuItems.value[i])
+  const items = menuItems.value
+  if (items.length === 0) return []
+  return recommendIndices.value
+    .filter(i => i < items.length)
+    .map(i => items[i])
 })
 
 const refreshRecommend = () => {
   const len = menuItems.value.length
+  if (len === 0) return
   const shuffled = Array.from({ length: len }, (_, i) => i).sort(() => Math.random() - 0.5)
-  recommendIndices.value = shuffled.slice(0, 2)
+  recommendIndices.value = shuffled.slice(0, Math.min(2, len))
 }
 
 // 随机抽取
 const isShaking = ref(false)
 const isSpinning = ref(false)
 const showPickResult = ref(false)
-const pickedItem = ref(menuItems.value[0])
+const pickedItem = ref({})
 
 const handleRandomPick = () => {
+  const items = menuItems.value
+  if (items.length === 0) {
+    uni.showToast({ title: '暂无菜品', icon: 'none' })
+    return
+  }
   showPickResult.value = false
   isShaking.value = true
   isSpinning.value = true
@@ -158,16 +183,17 @@ const handleRandomPick = () => {
   setTimeout(() => {
     isShaking.value = false
     isSpinning.value = false
-    const idx = Math.floor(Math.random() * menuItems.value.length)
-    pickedItem.value = menuItems.value[idx]
+    const idx = Math.floor(Math.random() * items.length)
+    pickedItem.value = items[idx]
     showPickResult.value = true
   }, 1200)
 }
 
 const goPickedDetail = () => {
   showPickResult.value = false
+  const id = pickedItem.value._id || pickedItem.value.id
   uni.navigateTo({
-    url: `/pages/detail/detail?id=${pickedItem.value.id}`,
+    url: `/pages/detail/detail?id=${id}`,
   })
 }
 
@@ -245,7 +271,7 @@ const goDetail = (id) => {
 
 .avatar-wrap {
   position: relative;
-  margin-right: 150rpx;
+  margin-right: 200rpx;
   flex-shrink: 0;
 }
 
