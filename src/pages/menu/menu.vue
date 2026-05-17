@@ -97,7 +97,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { onShow, onHide } from '@dcloudio/uni-app'
+import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import store, {
   addToCart,
   getCartTotal,
@@ -105,6 +105,7 @@ import store, {
   getAvailableItems,
   startMenuRealtimeSync,
   stopMenuRealtimeSync,
+  consumePendingMenuCategory,
 } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
@@ -118,7 +119,7 @@ const MENU_REALTIME_OWNER = 'customer-menu'
 const menuItems = computed(() => getAvailableItems())
 const sideCategories = computed(() => store.sideCategories.map(cat => ({
   ...cat,
-  count: cat.id === 'hot'
+  count: cat.id === 'all'
     ? menuItems.value.length
     : menuItems.value.filter(item => item.category === cat.id).length,
 })))
@@ -134,8 +135,28 @@ const refreshMenu = async () => {
   await loadMenuFromCloud()
 }
 
+const selectCategoryById = (categoryId) => {
+  const targetId = categoryId || 'all'
+  const index = sideCategories.value.findIndex(cat => cat.id === targetId)
+  activeCatIndex.value = index >= 0 ? index : 0
+}
+
+const applyPendingCategory = () => {
+  const pendingCategoryId = consumePendingMenuCategory()
+  if (pendingCategoryId) {
+    selectCategoryById(pendingCategoryId)
+  }
+}
+
+onLoad((options = {}) => {
+  if (options.category) {
+    selectCategoryById(options.category)
+  }
+})
+
 // onShow: 每次页面可见时立即刷新 + 启动轮询
 onShow(() => {
+  applyPendingCategory()
   refreshMenu()
   startMenuRealtimeSync(MENU_REALTIME_OWNER)
   if (!menuPollTimer) {
@@ -152,25 +173,15 @@ onHide(() => {
   }
 })
 
-const categoryMap = {
-  0: null,  // 全部菜品
-  1: 'dessert',
-  2: 'drink',
-  3: 'carb',
-  4: 'light',
-  5: 'warm',
-}
-
 const currentCategoryTitle = computed(() => {
-  const titles = ['全部菜品', '🍰 甜点', '🥤 饮品', '🍜 面食', '🥗 轻食', '🍵 暖饮']
-  return titles[activeCatIndex.value] || '全部菜品'
+  return sideCategories.value[activeCatIndex.value]?.name || '全部菜品'
 })
 
 const filteredItems = computed(() => {
   let items = menuItems.value
-  const catKey = categoryMap[activeCatIndex.value]
+  const catKey = sideCategories.value[activeCatIndex.value]?.id
   
-  if (catKey) {
+  if (catKey && catKey !== 'all') {
     items = items.filter(item => item.category === catKey)
   }
 

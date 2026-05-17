@@ -9,7 +9,7 @@
         <!-- 顶部问候 + 头像 -->
         <view class="header anim-item" :style="{ animationDelay: '0.05s' }">
           <view class="hd-left">
-            <text class="greeting-sub">{{ greetingText }} ☀️</text>
+            <text class="greeting-sub">{{ greetingText }} {{ greetingEmoji }}</text>
             <text class="greeting-main">今天想吃点什么？</text>
             <view v-if="roomId" class="room-badge-home">
               <text class="room-badge-home-text">🏠 {{ roomId }}</text>
@@ -69,7 +69,7 @@
         <view class="section anim-item" :style="{ animationDelay: '0.25s' }">
           <view class="section-header">
             <text class="section-title">今日主厨推荐</text>
-            <text class="section-link" @click="refreshRecommend">换一批 🔄</text>
+            <text class="section-link" @click="refreshRecommend">换一批</text>
           </view>
           <view class="rec-row">
             <view
@@ -123,9 +123,9 @@ import { onShow, onHide } from '@dcloudio/uni-app'
 import store, {
   loadMenuFromCloud,
   getAvailableItems,
-  getRoomId,
   startMenuRealtimeSync,
   stopMenuRealtimeSync,
+  setPendingMenuCategory,
 } from '@/store/index.js'
 import { checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
@@ -177,11 +177,18 @@ onHide(() => {
 
 const greetingText = computed(() => {
   const hour = new Date().getHours()
-  if (hour < 6) return '夜深了宝贝'
-  if (hour < 11) return '早安宝贝'
-  if (hour < 14) return '午安宝贝'
+  if (hour < 11) return '早上好宝贝'
+  if (hour < 14) return '中午好宝贝'
   if (hour < 18) return '下午好宝贝'
   return '晚上好宝贝'
+})
+
+const greetingEmoji = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 11) return '☀️'
+  if (hour < 14) return '🌞'
+  if (hour < 18) return '🌤️'
+  return '🌙'
 })
 
 // 推荐菜品（只从可用菜品中推荐）
@@ -235,10 +242,14 @@ const goPickedDetail = () => {
 }
 
 // 导航
-const goMenu = () => uni.switchTab({ url: '/pages/menu/menu' })
+const goMenu = () => {
+  setPendingMenuCategory('all')
+  uni.switchTab({ url: '/pages/menu/menu' })
+}
 const goProfile = () => uni.switchTab({ url: '/pages/profile/profile' })
 
 const goMenuCategory = (catId) => {
+  setPendingMenuCategory(catId)
   uni.switchTab({ url: '/pages/menu/menu' })
 }
 

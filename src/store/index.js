@@ -81,7 +81,36 @@ const COUPON_DEFINITIONS = [
     required: 50,
     available: false,
   },
+  {
+    id: 4,
+    name: '一周奶茶点单权',
+    desc: '累计投喂 80 次即可兑换',
+    emoji: '🧋',
+    color: '#E6FFFB',
+    required: 80,
+    available: false,
+  },
+  {
+    id: 5,
+    name: '周末一日陪玩券',
+    desc: '累计投喂 100 次即可兑换',
+    emoji: '🎮',
+    color: '#FFF1F0',
+    required: 100,
+    available: false,
+  },
+  {
+    id: 6,
+    name: '心愿菜单定制券',
+    desc: '累计投喂 150 次即可兑换',
+    emoji: '📝',
+    color: '#E8F3FF',
+    required: 150,
+    available: false,
+  },
 ]
+
+let pendingMenuCategoryId = ''
 
 function normalizeOrderRoomId(order) {
   return normalizeRoomId(order?.roomId || order?._roomId || '')
@@ -362,7 +391,8 @@ const store = reactive({
 
   // 侧栏分类（菜单页用）
   sideCategories: [
-    { id: 'hot', name: '全部菜品', active: true },
+    { id: 'all', name: '全部菜品', active: true },
+    { id: 'hot', name: '🔥 热销', active: false },
     { id: 'dessert', name: '🍰 甜点', active: false },
     { id: 'drink', name: '🥤 饮品', active: false },
     { id: 'carb', name: '🍜 面食', active: false },
@@ -390,7 +420,7 @@ const store = reactive({
     privileges: 0,
     favorites: 0,
     dislikes: ['香菜', '苦瓜'],
-    allergies: '无',
+    allergies: [],
   },
 
   // 主厨信息（服务端）
@@ -524,6 +554,18 @@ export function clearRoomId() {
 
 export function setRoomInfo(info) {
   store.roomInfo = info
+}
+
+// ========== 点餐页分类跳转 ==========
+
+export function setPendingMenuCategory(categoryId) {
+  pendingMenuCategoryId = categoryId || ''
+}
+
+export function consumePendingMenuCategory() {
+  const categoryId = pendingMenuCategoryId
+  pendingMenuCategoryId = ''
+  return categoryId
 }
 
 // ========== 菜品云端操作 ==========

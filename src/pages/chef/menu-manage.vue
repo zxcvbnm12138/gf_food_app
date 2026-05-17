@@ -445,7 +445,7 @@ const chooseAndUploadImage = () => {
 .page-title { font-size: 40rpx; font-weight: bold; color: #1D2129; }
 .header-count { padding: 8rpx 24rpx; border-radius: 24rpx; background: #E8F3FF; margin-right: 200rpx; }
 .count-text { font-size: 24rpx; color: #4080FF; font-weight: bold; }
-.search-bar { display: flex; align-items: center; gap: 16rpx; margin: 0 32rpx 0; padding: 0 24rpx; height: 72rpx; background: #F2F3F5; border-radius: 36rpx; }
+.search-bar { display: flex; align-items: center; gap: 16rpx; margin: 18rpx 32rpx 0; padding: 0 24rpx; height: 72rpx; background: #F2F3F5; border-radius: 36rpx; }
 .search-icon { font-size: 28rpx; }
 .search-input { flex: 1; font-size: 26rpx; color: #1D2129; height: 72rpx; }
 .menu-scroll { flex: 1; overflow: hidden; }

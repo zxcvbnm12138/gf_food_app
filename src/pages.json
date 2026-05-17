@@ -54,6 +54,13 @@
 			}
 		},
 		{
+			"path": "pages/profile/coupons",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "特权兑换券"
+			}
+		},
+		{
 			"path": "pages/chef/dashboard",
 			"style": {
 				"navigationStyle": "custom",

@@ -52,7 +52,7 @@
         <!-- 特权兑换券 -->
         <view class="section-head">
           <text class="section-title">特权兑换券 🎁</text>
-          <text class="section-link">查看全部 ›</text>
+          <text class="section-link" @click="goCoupons">查看全部 ›</text>
         </view>
 
         <view
@@ -96,7 +96,14 @@
           <view class="pref-divider"></view>
           <view class="pref-row">
             <text class="pref-label">过敏提醒 ⚠️</text>
-            <text class="pref-value" @click="editAllergy">{{ user.allergies }}</text>
+            <view class="pref-tags">
+              <view v-for="(tag, i) in allergyTags" :key="i" class="pref-tag warning">
+                <text class="pref-tag-text warning">{{ tag }}</text>
+              </view>
+              <view class="pref-tag add" @click="addAllergy">
+                <text class="pref-tag-text add">+</text>
+              </view>
+            </view>
           </view>
         </view>
 
@@ -113,12 +120,6 @@
             <text class="setting-icon">🧹</text>
             <text class="setting-label">清除历史记录</text>
             <view class="setting-chevron"></view>
-          </view>
-          <view class="setting-divider"></view>
-          <view class="setting-row">
-            <text class="setting-icon">🔔</text>
-            <text class="setting-label">通知设置</text>
-            <switch class="setting-switch" :checked="notifyOn" @change="toggleNotify" color="#FF4D4F" />
           </view>
           <view class="setting-divider"></view>
           <view class="setting-row" @click="switchToChef">
@@ -183,9 +184,14 @@ import { leaveRoom, checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
 const user = computed(() => store.user)
-const coupons = computed(() => store.coupons)
+const coupons = computed(() => store.coupons.slice(0, 3))
 const roomId = computed(() => store.roomId)
-const notifyOn = ref(true)
+const allergyTags = computed(() => {
+  const allergies = store.user.allergies
+  if (Array.isArray(allergies)) return allergies.filter(Boolean)
+  if (!allergies || allergies === '无') return []
+  return String(allergies).split(/[,，、]/).map(item => item.trim()).filter(Boolean)
+})
 
 const showRedeem = ref(false)
 const redeemItem = ref({})
@@ -240,22 +246,21 @@ const addDislike = () => {
   })
 }
 
-const editAllergy = () => {
+const addAllergy = () => {
   uni.showModal({
-    title: '过敏提醒',
+    title: '添加过敏源',
     editable: true,
     placeholderText: '请输入过敏原',
-    content: store.user.allergies === '无' ? '' : store.user.allergies,
     success: (res) => {
-      if (res.confirm) {
-        store.user.allergies = res.content?.trim() || '无'
+      if (res.confirm && res.content && res.content.trim()) {
+        const nextAllergy = res.content.trim()
+        const current = allergyTags.value
+        if (!current.includes(nextAllergy)) {
+          store.user.allergies = [...current, nextAllergy]
+        }
       }
     }
   })
-}
-
-const toggleNotify = (e) => {
-  notifyOn.value = e.detail.value
 }
 
 const showAbout = () => {
@@ -299,6 +304,10 @@ const copyRoomId = () => {
       uni.showToast({ title: '已复制房间号 📋', icon: 'none' })
     },
   })
+}
+
+const goCoupons = () => {
+  uni.navigateTo({ url: '/pages/profile/coupons' })
 }
 
 const exitRoom = () => {
@@ -603,9 +612,17 @@ const doLogout = () => {
   background: #F2F3F5;
 }
 
+.pref-tag.warning {
+  background: #FFF7E6;
+}
+
 .pref-tag-text {
   font-size: 22rpx;
   color: #FF4D4F;
+}
+
+.pref-tag-text.warning {
+  color: #FA8C16;
 }
 
 .pref-tag-text.add {
