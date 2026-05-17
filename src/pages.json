@@ -75,6 +75,13 @@
 			}
 		},
 		{
+			"path": "pages/chef/menu-init",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "初始化菜单"
+			}
+		},
+		{
 			"path": "pages/chef/profile",
 			"style": {
 				"navigationStyle": "custom",

@@ -54,6 +54,25 @@
             </view>
           </view>
 
+          <!-- 历史房间 -->
+          <view class="history-entry-card" @click="openHistoryRooms">
+            <view class="history-entry-left">
+              <view class="history-entry-icon">
+                <text class="history-entry-emoji">🕘</text>
+              </view>
+              <view class="history-entry-info">
+                <text class="history-entry-title">历史房间</text>
+                <text class="history-entry-desc">
+                  {{ historyRooms.length > 0 ? historyRooms.length + ' 个可进入的房间' : '查看当前微信下的房间' }}
+                </text>
+              </view>
+            </view>
+            <view class="room-action-arrow">
+              <view v-if="isLoadingHistory" class="login-spinner blue"></view>
+              <text v-else class="room-action-arrow-text">›</text>
+            </view>
+          </view>
+
           <!-- 创建新房间 -->
           <view class="room-action-card" @click="handleCreateRoom">
             <view class="room-action-icon" style="background: linear-gradient(135deg, #FF4D4F 0%, #FF8C9A 100%)">
@@ -116,7 +135,13 @@
 
         <!-- Step 2: 选择角色 -->
         <view v-if="step === 2" class="step-section anim-item" :style="{ animationDelay: '0.05s' }">
-          <text class="step-title">选择你的身份</text>
+          <view class="role-step-head">
+            <view class="role-back-btn" @click="backToRoomStep">
+              <text class="role-back-icon">‹</text>
+              <text class="role-back-text">返回选房间</text>
+            </view>
+            <text class="step-title">选择你的身份</text>
+          </view>
           <view class="room-badge">
             <text class="room-badge-text">🏠 房间: {{ currentRoomId }}</text>
           </view>
@@ -174,6 +199,38 @@
           </view>
         </view>
 
+        <!-- 历史房间弹层 -->
+        <view v-if="showHistoryRooms" class="history-overlay" @click="showHistoryRooms = false">
+          <view class="history-modal" @click.stop>
+            <view class="history-modal-head">
+              <text class="history-modal-title">历史房间</text>
+              <text class="history-modal-close" @click="showHistoryRooms = false">×</text>
+            </view>
+            <view v-if="isLoadingHistory" class="history-loading">
+              <view class="login-spinner blue"></view>
+              <text class="history-loading-text">加载中...</text>
+            </view>
+            <scroll-view v-else class="history-list" scroll-y :enhanced="true" :show-scrollbar="false">
+              <view
+                v-for="room in historyRooms"
+                :key="room._id || room.roomId"
+                class="history-room-row"
+                @click="enterHistoryRoom(room)"
+              >
+                <view class="history-room-main">
+                  <text class="history-room-id">{{ room.roomId }}</text>
+                  <text class="history-room-meta">{{ room.isCreator ? '我创建的房间' : '我加入的房间' }}</text>
+                </view>
+                <text class="history-room-enter">进入</text>
+              </view>
+              <view v-if="historyRooms.length === 0" class="history-empty">
+                <text class="history-empty-emoji">🏠</text>
+                <text class="history-empty-text">暂无历史房间</text>
+              </view>
+            </scroll-view>
+          </view>
+        </view>
+
         <!-- 底部标语 -->
         <view class="footer anim-item" :style="{ animationDelay: '0.3s' }">
           <text class="footer-text">用心做的每一道菜，都是爱你的方式 💕</text>
@@ -185,11 +242,11 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { setRole, setLoginState, setRoomId } from '@/store/index.js'
+import { setRole, setLoginState, setRoomId, clearRoomId } from '@/store/index.js'
 import {
   wxLogin, checkLogin,
   createRoom, joinRoom,
-  getStoredRoomId,
+  getStoredRoomId, getUserRooms, normalizeRoomId,
 } from '@/services/cloud.js'
 
 const stepLabels = ['登录', '房间', '角色']
@@ -203,17 +260,40 @@ const showCreatedRoom = ref(false)
 const createdRoomId = ref('')
 const currentRoomId = ref('')
 const existingRoomId = ref('')
+const historyRooms = ref([])
+const showHistoryRooms = ref(false)
+const isLoadingHistory = ref(false)
+const historyLoaded = ref(false)
+const isNewRoomFlow = ref(false)
+
+const loadRoomHints = async (openid) => {
+  const storedRoom = getStoredRoomId()
+  if (storedRoom) {
+    existingRoomId.value = storedRoom
+  }
+  if (!openid) return
+
+  isLoadingHistory.value = true
+  try {
+    const rooms = await getUserRooms(openid)
+    historyRooms.value = rooms
+    historyLoaded.value = true
+    if (!existingRoomId.value && rooms.length > 0) {
+      existingRoomId.value = rooms[0].roomId
+    }
+  } catch (e) {
+    console.warn('加载历史房间失败:', e)
+  } finally {
+    isLoadingHistory.value = false
+  }
+}
 
 onMounted(() => {
   // 检查是否已登录
   const loginData = checkLogin()
   if (loginData && loginData.openid) {
     setLoginState(loginData.openid)
-    // 检查是否有已存储的房间号
-    const storedRoom = getStoredRoomId()
-    if (storedRoom) {
-      existingRoomId.value = storedRoom
-    }
+    loadRoomHints(loginData.openid)
     step.value = 1
   }
 })
@@ -227,10 +307,7 @@ const handleLogin = async () => {
     if (result && result.openid) {
       setLoginState(result.openid)
       uni.showToast({ title: '登录成功 ✨', icon: 'none', duration: 1000 })
-      const storedRoom = getStoredRoomId()
-      if (storedRoom) {
-        existingRoomId.value = storedRoom
-      }
+      loadRoomHints(result.openid)
       setTimeout(() => { step.value = 1 }, 500)
     } else {
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
@@ -255,6 +332,7 @@ const handleCreateRoom = async () => {
       createdRoomId.value = result.roomId
       currentRoomId.value = result.roomId
       setRoomId(result.roomId)
+      isNewRoomFlow.value = true
       showCreatedRoom.value = true
       step.value = -1 // 隐藏 step 1 内容
     } else {
@@ -269,15 +347,24 @@ const handleCreateRoom = async () => {
 
 // Step 1: 加入房间
 const handleJoinRoom = async () => {
-  if (isJoining.value || joinCode.value.length < 6) return
+  if (joinCode.value.length < 6) return
+  await enterRoom(joinCode.value)
+}
+
+const enterRoom = async (roomId) => {
+  if (isJoining.value) return
+  const normalizedRoomId = normalizeRoomId(roomId)
+  if (!normalizedRoomId || normalizedRoomId.length < 6) return
   isJoining.value = true
   try {
     const loginData = checkLogin()
     const openid = loginData?.openid || ''
-    const result = await joinRoom(joinCode.value, openid)
+    const result = await joinRoom(normalizedRoomId, openid)
     if (result.success) {
-      currentRoomId.value = joinCode.value.toUpperCase()
+      currentRoomId.value = normalizeRoomId(result.roomInfo?.roomId || normalizedRoomId)
       setRoomId(currentRoomId.value)
+      isNewRoomFlow.value = false
+      showHistoryRooms.value = false
       uni.showToast({ title: '加入成功 🎉', icon: 'none', duration: 1000 })
       setTimeout(() => { step.value = 2 }, 500)
     } else {
@@ -292,17 +379,20 @@ const handleJoinRoom = async () => {
 
 // 快速进入已有房间
 const quickJoinExisting = async () => {
-  const loginData = checkLogin()
-  const openid = loginData?.openid || ''
-  const result = await joinRoom(existingRoomId.value, openid)
-  if (result.success) {
-    currentRoomId.value = (result.roomInfo?.roomId || existingRoomId.value || '').trim().toUpperCase()
-    setRoomId(currentRoomId.value)
-    step.value = 2
-  } else {
-    uni.showToast({ title: result.message || '房间已失效', icon: 'none' })
-    existingRoomId.value = ''
+  await enterRoom(existingRoomId.value)
+}
+
+const openHistoryRooms = async () => {
+  showHistoryRooms.value = true
+  if (!historyLoaded.value) {
+    const loginData = checkLogin()
+    await loadRoomHints(loginData?.openid || '')
   }
+}
+
+const enterHistoryRoom = async (room) => {
+  if (!room?.roomId) return
+  await enterRoom(room.roomId)
 }
 
 const onJoinInput = (e) => {
@@ -323,11 +413,22 @@ const proceedToRole = () => {
   step.value = 2
 }
 
+const backToRoomStep = () => {
+  showCreatedRoom.value = false
+  currentRoomId.value = ''
+  joinCode.value = ''
+  isNewRoomFlow.value = false
+  clearRoomId()
+  step.value = 1
+}
+
 // Step 2: 选择角色
 const selectRole = (role) => {
   setRole(role)
   if (role === 'customer') {
     uni.switchTab({ url: '/pages/index/index' })
+  } else if (isNewRoomFlow.value) {
+    uni.redirectTo({ url: '/pages/chef/menu-init' })
   } else {
     uni.switchTab({ url: '/pages/chef/dashboard' })
   }
@@ -382,6 +483,7 @@ const selectRole = (role) => {
 .login-btn-text { font-size: 32rpx; font-weight: bold; color: #FFFFFF; }
 .login-spinner-wrap { display: flex; align-items: center; gap: 16rpx; }
 .login-spinner { width: 32rpx; height: 32rpx; border: 4rpx solid rgba(255,255,255,0.3); border-top-color: #FFFFFF; border-radius: 50%; animation: spin 0.8s linear infinite; }
+.login-spinner.blue { border-color: rgba(64,128,255,0.18); border-top-color: #4080FF; }
 
 /* Existing room card */
 .existing-room-card { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, #FFF7E6 0%, #FFF1F0 100%); border-radius: 28rpx; padding: 28rpx 32rpx; border: 2rpx solid rgba(255,77,79,0.15); }
@@ -391,6 +493,16 @@ const selectRole = (role) => {
 .existing-room-btn { padding: 16rpx 32rpx; border-radius: 28rpx; background: #FF4D4F; }
 .existing-room-btn:active { transform: scale(0.95); }
 .existing-room-btn-text { font-size: 26rpx; font-weight: bold; color: #FFFFFF; }
+
+/* History entry */
+.history-entry-card { display: flex; align-items: center; justify-content: space-between; gap: 24rpx; background: #FFFFFF; border-radius: 28rpx; padding: 28rpx 32rpx; box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.06); transition: all 0.3s ease; }
+.history-entry-card:active { transform: scale(0.97); }
+.history-entry-left { display: flex; align-items: center; gap: 24rpx; min-width: 0; }
+.history-entry-icon { width: 88rpx; height: 88rpx; border-radius: 24rpx; background: #E8F3FF; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.history-entry-emoji { font-size: 40rpx; }
+.history-entry-info { display: flex; flex-direction: column; gap: 8rpx; min-width: 0; }
+.history-entry-title { font-size: 30rpx; font-weight: bold; color: #1D2129; }
+.history-entry-desc { font-size: 22rpx; color: #86909C; }
 
 /* Room action cards */
 .room-action-card { display: flex; align-items: center; gap: 24rpx; background: #FFFFFF; border-radius: 28rpx; padding: 32rpx; box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.06); transition: all 0.3s ease; }
@@ -432,6 +544,12 @@ const selectRole = (role) => {
 .room-badge { align-self: center; padding: 12rpx 28rpx; background: #FFF1F0; border-radius: 24rpx; border: 2rpx solid rgba(255,77,79,0.15); }
 .room-badge-text { font-size: 24rpx; font-weight: bold; color: #FF4D4F; letter-spacing: 4rpx; }
 
+.role-step-head { display: flex; flex-direction: column; align-items: center; gap: 18rpx; }
+.role-back-btn { align-self: flex-start; display: flex; align-items: center; gap: 8rpx; height: 64rpx; padding: 0 24rpx; border-radius: 32rpx; background: #FFFFFF; box-shadow: 0 8rpx 24rpx rgba(0,0,0,0.06); transition: transform 0.2s ease; }
+.role-back-btn:active { transform: scale(0.96); }
+.role-back-icon { font-size: 40rpx; line-height: 1; color: #4E5969; font-weight: bold; }
+.role-back-text { font-size: 24rpx; color: #4E5969; font-weight: bold; }
+
 /* Role cards */
 .role-card { display: flex; align-items: center; gap: 28rpx; background: #FFFFFF; border-radius: 32rpx; padding: 36rpx 32rpx; box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.06); transition: all 0.3s cubic-bezier(0.4,0,0.2,1); position: relative; overflow: hidden; }
 .role-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 32rpx; border: 3rpx solid transparent; transition: border-color 0.3s ease; }
@@ -452,6 +570,22 @@ const selectRole = (role) => {
 .role-tag-text { font-size: 20rpx; font-weight: bold; color: #4E5969; }
 .role-arrow { width: 56rpx; height: 56rpx; border-radius: 28rpx; background: #F7F8FA; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .role-arrow-text { font-size: 36rpx; color: #86909C; font-weight: bold; }
+
+/* History modal */
+.history-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.48); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 40rpx; animation: fadeIn 0.2s ease; }
+.history-modal { width: 100%; max-height: 76vh; background: #FFFFFF; border-radius: 32rpx; padding: 36rpx 32rpx; display: flex; flex-direction: column; gap: 24rpx; animation: bounceIn 0.35s ease; }
+.history-modal-head { display: flex; align-items: center; justify-content: space-between; }
+.history-modal-title { font-size: 34rpx; font-weight: bold; color: #1D2129; }
+.history-modal-close { width: 56rpx; height: 56rpx; border-radius: 28rpx; background: #F2F3F5; color: #86909C; font-size: 40rpx; line-height: 52rpx; text-align: center; }
+.history-list { max-height: 52vh; }
+.history-room-row { display: flex; align-items: center; justify-content: space-between; padding: 28rpx 0; border-bottom: 2rpx solid #F2F3F5; }
+.history-room-main { display: flex; flex-direction: column; gap: 8rpx; }
+.history-room-id { font-size: 38rpx; font-weight: bold; color: #FF4D4F; letter-spacing: 8rpx; font-family: 'Courier New', monospace; }
+.history-room-meta { font-size: 22rpx; color: #86909C; }
+.history-room-enter { font-size: 26rpx; font-weight: bold; color: #4080FF; }
+.history-loading, .history-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20rpx; padding: 80rpx 0; }
+.history-loading-text, .history-empty-text { font-size: 26rpx; color: #86909C; }
+.history-empty-emoji { font-size: 76rpx; }
 
 /* Footer */
 .footer { padding-top: 20rpx; }

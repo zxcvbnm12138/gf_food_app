@@ -5,7 +5,12 @@
     <view class="orders-header">
       <view class="header-copy">
         <text class="header-kicker">投喂记录</text>
-        <text class="header-title">清单总览</text>
+        <view class="header-title-row">
+          <text class="header-title">清单总览</text>
+          <view class="today-btn" @click="goToday">
+            <text class="today-btn-text">今天</text>
+          </view>
+        </view>
       </view>
       <view class="header-stat">
         <text class="stat-num">{{ sortedOrders.length }}</text>
@@ -152,7 +157,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import store, { loadOrdersFromCloud, getRushCooldownRemaining, rushOrderAction } from '@/store/index.js'
+import { loadOrdersFromCloud, getCurrentRoomOrders, getRushCooldownRemaining, rushOrderAction } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const weekDays = ['日', '一', '二', '三', '四', '五', '六']
@@ -168,7 +173,7 @@ const toDateKey = (date) => {
 const getOrderDate = (order) => toDateKey(new Date(order.createdAt))
 
 const sortedOrders = computed(() => {
-  return [...store.orders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  return [...getCurrentRoomOrders()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 })
 
 const initialDate = sortedOrders.value[0] ? new Date(sortedOrders.value[0].createdAt) : new Date()
@@ -217,7 +222,7 @@ const monthLabel = computed(() => {
 })
 
 const dateCounts = computed(() => {
-  return store.orders.reduce((map, order) => {
+  return sortedOrders.value.reduce((map, order) => {
     const key = getOrderDate(order)
     map[key] = (map[key] || 0) + order.totalCount
     return map
@@ -268,6 +273,12 @@ const changeMonth = (delta) => {
 
 const selectDate = (dateKey) => { selectedDate.value = dateKey }
 
+const goToday = () => {
+  const today = new Date()
+  activeMonth.value = new Date(today.getFullYear(), today.getMonth(), 1)
+  selectedDate.value = toDateKey(today)
+}
+
 const selectOrderDate = (order) => {
   const date = new Date(order.createdAt)
   activeMonth.value = new Date(date.getFullYear(), date.getMonth(), 1)
@@ -292,7 +303,6 @@ const getOptionsText = (item) => {
   if (item.options?.sweet) parts.push(item.options.sweet)
   if (item.options?.extras?.length) parts.push(...item.options.extras)
   if (item.options?.extra) parts.push(item.options.extra)
-  if (item.options?.note) parts.push(item.options.note)
   return parts.join(' / ') || '默认口味'
 }
 
@@ -438,6 +448,34 @@ onUnmounted(() => { stopCooldownTimer() })
 .header-title {
   font-size: 40rpx;
   color: #1D2129;
+  font-weight: bold;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.today-btn {
+  height: 48rpx;
+  padding: 0 22rpx;
+  border-radius: 24rpx;
+  background: #FFF1F0;
+  border: 2rpx solid rgba(255, 77, 79, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.today-btn:active {
+  transform: scale(0.94);
+}
+
+.today-btn-text {
+  font-size: 22rpx;
+  color: #FF4D4F;
   font-weight: bold;
 }
 

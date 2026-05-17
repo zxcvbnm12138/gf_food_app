@@ -55,7 +55,7 @@
             </view>
             <view class="mi-info">
               <text class="mi-name">{{ item.name }}</text>
-              <text class="mi-desc">{{ item.desc }}</text>
+              <text class="mi-desc">{{ getBriefDesc(item) }}</text>
               <view class="mi-bottom">
                 <text class="mi-price">❤️ {{ item.price }}</text>
                 <view class="mi-add-btn" @click.stop="quickAdd(item)">
@@ -124,6 +124,7 @@ const sideCategories = computed(() => store.sideCategories.map(cat => ({
 })))
 
 const cartTotal = computed(() => getCartTotal())
+const getBriefDesc = (item) => item.desc || ''
 
 // 菜品轮询刷新
 let menuPollTimer = null
@@ -177,7 +178,7 @@ const filteredItems = computed(() => {
     const keyword = searchText.value.trim().toLowerCase()
     items = items.filter(item =>
       item.name.toLowerCase().includes(keyword) ||
-      item.desc.toLowerCase().includes(keyword)
+      getBriefDesc(item).toLowerCase().includes(keyword)
     )
   }
   
@@ -441,7 +442,11 @@ const goBack = () => {
   color: #86909C;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  line-height: 1.4;
 }
 
 .mi-bottom {

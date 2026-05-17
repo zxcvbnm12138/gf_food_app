@@ -40,7 +40,7 @@
         </view>
 
         <!-- 描述 -->
-        <text class="item-desc">{{ item.fullDesc }}</text>
+        <text class="item-desc">{{ detailDescription }}</text>
 
         <!-- 甜度选择 -->
         <view class="option-section" v-if="item.sweetOptions && item.sweetOptions.length > 0">
@@ -71,20 +71,6 @@
             >
               <text class="option-text" :class="{ active: selectedExtras.includes(i) }">{{ opt }}</text>
             </view>
-          </view>
-        </view>
-
-        <!-- 撒娇备注 -->
-        <view class="note-section">
-          <text class="option-label">撒娇备注</text>
-          <view class="note-input-wrap">
-            <textarea
-              class="note-input"
-              v-model="noteText"
-              placeholder="比如：多放点草莓，要亲手喂我吃..."
-              maxlength="200"
-              :auto-height="true"
-            />
           </view>
         </view>
 
@@ -121,14 +107,19 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import store, { addToCart, loadMenuFromCloud, startMenuRealtimeSync, stopMenuRealtimeSync } from '@/store/index.js'
+import store, {
+  addToCart,
+  loadMenuFromCloud,
+  startMenuRealtimeSync,
+  stopMenuRealtimeSync,
+  isFavoriteItem,
+  toggleFavoriteItem,
+} from '@/store/index.js'
 
 const itemId = ref('')
 const quantity = ref(1)
 const selectedSweet = ref(0)
 const selectedExtras = ref([0])
-const noteText = ref('')
-const isFav = ref(false)
 const showSuccess = ref(false)
 const isHeroDragging = ref(false)
 const heroHeight = ref(500)
@@ -145,6 +136,11 @@ const item = computed(() => {
   const id = itemId.value
   return store.menuItems.find(m => (m._id === id || String(m.id) === String(id) || m._id === id)) || store.menuItems[0] || {}
 })
+
+const detailDescription = computed(() => item.value.fullDesc || item.value.desc || '')
+
+const currentItemId = computed(() => item.value._id || item.value.id || itemId.value)
+const isFav = computed(() => isFavoriteItem(currentItemId.value))
 
 const heroAreaStyle = computed(() => {
   return {
@@ -242,9 +238,9 @@ const endHeroDrag = () => {
 }
 
 const toggleFav = () => {
-  isFav.value = !isFav.value
+  const nextFav = toggleFavoriteItem(currentItemId.value)
   uni.showToast({
-    title: isFav.value ? '已收藏 ❤️' : '已取消收藏',
+    title: nextFav ? '已收藏 ❤️' : '已取消收藏',
     icon: 'none',
     duration: 1200,
   })
@@ -258,7 +254,6 @@ const handleAddToCart = () => {
     addToCart(item.value, {
       sweet: sweetName,
       extras: extraNames,
-      note: noteText.value,
     })
   }
 
@@ -454,27 +449,6 @@ const goBack = () => {
 .option-text.active {
   color: #FFFFFF;
   font-weight: bold;
-}
-
-/* 备注 */
-.note-section {
-  display: flex;
-  flex-direction: column;
-  gap: 24rpx;
-}
-
-.note-input-wrap {
-  background: #F7F8FA;
-  border-radius: 24rpx;
-  padding: 24rpx;
-  min-height: 144rpx;
-}
-
-.note-input {
-  width: 100%;
-  font-size: 24rpx;
-  color: #4E5969;
-  line-height: 1.6;
 }
 
 .detail-bottom-spacer {

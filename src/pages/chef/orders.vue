@@ -55,7 +55,7 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import store, { acceptOrder, startCooking, completeOrder, getOrdersByStatus, loadOrdersFromCloud } from '@/store/index.js'
+import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, loadOrdersFromCloud } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const activeTab = ref(0)
 
@@ -96,7 +96,7 @@ onHide(() => {
 onUnmounted(() => {
   stopPolling()
 })
-const allOrders = computed(() => store.orders)
+const allOrders = computed(() => getCurrentRoomOrders())
 const pendingOrders = computed(() => getOrdersByStatus('pending'))
 const inProgressOrders = computed(() => [...getOrdersByStatus('accepted'), ...getOrdersByStatus('cooking')].sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)))
 const doneOrders = computed(() => getOrdersByStatus('done').sort((a,b) => new Date(b.completedAt || b.createdAt) - new Date(a.completedAt || a.createdAt)))

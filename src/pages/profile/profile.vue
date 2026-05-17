@@ -168,7 +168,17 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import store, { clearOrders, updateUserAvatar, setRole, clearRole, clearLoginState, clearRoomId } from '@/store/index.js'
+import { onShow } from '@dcloudio/uni-app'
+import store, {
+  clearOrders,
+  updateUserAvatar,
+  setRole,
+  clearRole,
+  clearLoginState,
+  clearRoomId,
+  loadOrdersFromCloud,
+  refreshUserStats,
+} from '@/store/index.js'
 import { leaveRoom, checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
@@ -179,6 +189,15 @@ const notifyOn = ref(true)
 
 const showRedeem = ref(false)
 const redeemItem = ref({})
+
+onShow(() => {
+  refreshUserStats()
+  loadOrdersFromCloud()
+    .then(() => refreshUserStats())
+    .catch((e) => {
+      console.warn('[Profile] 刷新真实统计失败', e)
+    })
+})
 
 const onChooseAvatar = (e) => {
   const avatarUrl = e.detail?.avatarUrl
@@ -302,7 +321,6 @@ const exitRoom = () => {
 const doLogout = () => {
   clearLoginState()
   clearRole()
-  clearRoomId()
   uni.reLaunch({ url: '/pages/login/login' })
 }
 </script>

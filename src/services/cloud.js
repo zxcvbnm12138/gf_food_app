@@ -193,6 +193,38 @@ export function normalizeRoomId(roomId) {
   return roomId ? String(roomId).trim().toUpperCase() : ''
 }
 
+function getRoomTimestamp(room) {
+  const value = room?.updatedAt || room?.createdAt || 0
+  if (!value) return 0
+  if (typeof value === 'number') return value
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'object' && typeof value.getTime === 'function') return value.getTime()
+  const parsed = new Date(value).getTime()
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+function normalizeUserRooms(rooms, openid) {
+  const map = new Map()
+  ;(Array.isArray(rooms) ? rooms : []).forEach(room => {
+    const roomId = normalizeRoomId(room?.roomId)
+    if (!roomId) return
+    const members = Array.isArray(room.members) ? room.members : []
+    const canUseRoom = !openid || room.creatorOpenid === openid || members.includes(openid)
+    if (!canUseRoom) return
+    const existing = map.get(roomId)
+    if (!existing || getRoomTimestamp(room) > getRoomTimestamp(existing)) {
+      map.set(roomId, {
+        ...room,
+        roomId,
+        members,
+        isCreator: room.creatorOpenid === openid,
+      })
+    }
+  })
+  return Array.from(map.values())
+    .sort((a, b) => getRoomTimestamp(b) - getRoomTimestamp(a))
+}
+
 /**
  * 读取本地缓存的房间号
  */
@@ -394,23 +426,51 @@ export async function getRoomInfo(roomId) {
 export async function getRoomByMember(openid) {
   if (!openid) return null
 
+  const rooms = await getUserRooms(openid)
+  return rooms[0]?.roomId || getStoredRoomId() || null
+}
+
+/**
+ * 根据 openid 获取用户历史房间。
+ * 包含用户创建过的房间，以及 members 中包含该 openid 的房间。
+ * @param {string} openid
+ * @returns {Promise<Array>}
+ */
+export async function getUserRooms(openid) {
+  if (!openid) return []
+
+  const storedRoomId = getStoredRoomId()
   if (!isCloudAvailable() || !cloudInited) {
-    return getStoredRoomId() || null
+    return storedRoomId
+      ? [{ roomId: storedRoomId, _id: 'local_room_' + storedRoomId, members: [openid], isCreator: false }]
+      : []
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'getUserRooms',
+      data: { openid },
+    })
+    if (res.result && res.result.success && Array.isArray(res.result.rooms)) {
+      return normalizeUserRooms(res.result.rooms, openid)
+    }
+    console.warn('[Cloud] 历史房间云函数返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] getUserRooms 云函数调用失败，尝试直接查询:', e.message || e)
   }
 
   try {
     const db = getDB()
-    // 注意：微信云数据库 where 支持 array contains 查询需要用 command
     const res = await db.collection('rooms')
       .orderBy('createdAt', 'desc')
-      .limit(20)
+      .limit(100)
       .get()
-    // 在客户端过滤包含此 openid 的房间
-    const myRoom = res.data.find(r => r.members && r.members.includes(openid))
-    return myRoom ? myRoom.roomId : null
+    return normalizeUserRooms(res.data, openid)
   } catch (e) {
-    console.error('[Cloud] 查找用户房间失败:', e)
-    return getStoredRoomId() || null
+    console.error('[Cloud] 查找用户历史房间失败:', e)
+    return storedRoomId
+      ? [{ roomId: storedRoomId, _id: 'local_cached_' + storedRoomId, members: [openid], isCreator: false }]
+      : []
   }
 }
 

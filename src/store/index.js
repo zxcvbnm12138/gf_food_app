@@ -28,9 +28,12 @@ import {
 
 const ORDERS_STORAGE_KEY = 'gf_food_orders'
 const USER_AVATAR_STORAGE_KEY = 'gf_food_user_avatar'
+const USER_FAVORITES_STORAGE_KEY = 'gf_food_user_favorites'
 const ROLE_STORAGE_KEY = 'gf_food_role'
 const CHEF_AVATAR_STORAGE_KEY = 'gf_food_chef_avatar'
 const RUSH_STORAGE_KEY = 'gf_food_rush_times'
+const ORDERS_STORAGE_VERSION = 2
+const LEGACY_ORDERS_ROOM_KEY = '__legacy__'
 
 // 正在进行云端操作的订单ID集合（操作锁）
 const pendingOperations = new Set()
@@ -47,21 +50,121 @@ const chefOrdersSyncOwners = new Set()
 
 // 状态优先级：只允许前进，不允许回退
 const STATUS_PRIORITY = { pending: 0, accepted: 1, cooking: 2, done: 3 }
+const initialRoomId = getStoredRoomId()
+let ordersRoomId = initialRoomId
 
-function readStoredOrders() {
+const COUPON_DEFINITIONS = [
+  {
+    id: 1,
+    name: '15分钟肩颈按摩券',
+    desc: '累计投喂 20 次即可兑换',
+    emoji: '💆‍♀️',
+    color: '#FFF7E6',
+    required: 20,
+    available: false,
+  },
+  {
+    id: 2,
+    name: '免跑腿代买券',
+    desc: '累计投喂 30 次即可兑换',
+    emoji: '🛍️',
+    color: '#F0F5FF',
+    required: 30,
+    available: false,
+  },
+  {
+    id: 3,
+    name: '指定电影陪看券',
+    desc: '累计投喂 50 次即可兑换',
+    emoji: '🎬',
+    color: '#F6FFED',
+    required: 50,
+    available: false,
+  },
+]
+
+function normalizeOrderRoomId(order) {
+  return normalizeRoomId(order?.roomId || order?._roomId || '')
+}
+
+function emptyOrdersStorage() {
+  return {
+    version: ORDERS_STORAGE_VERSION,
+    rooms: {},
+  }
+}
+
+function normalizeOrdersStorage(saved) {
+  if (Array.isArray(saved)) {
+    const storage = emptyOrdersStorage()
+    saved.forEach(order => {
+      const roomId = normalizeOrderRoomId(order) || LEGACY_ORDERS_ROOM_KEY
+      if (!storage.rooms[roomId]) storage.rooms[roomId] = []
+      storage.rooms[roomId].push(order)
+    })
+    return storage
+  }
+
+  if (saved && typeof saved === 'object' && saved.rooms && typeof saved.rooms === 'object') {
+    const storage = emptyOrdersStorage()
+    Object.keys(saved.rooms).forEach(roomKey => {
+      const normalizedRoomKey = roomKey === LEGACY_ORDERS_ROOM_KEY ? roomKey : normalizeRoomId(roomKey)
+      if (!normalizedRoomKey || !Array.isArray(saved.rooms[roomKey])) return
+      storage.rooms[normalizedRoomKey] = saved.rooms[roomKey]
+    })
+    return storage
+  }
+
+  return emptyOrdersStorage()
+}
+
+function readOrdersStorage() {
   try {
-    if (typeof uni === 'undefined') return []
+    if (typeof uni === 'undefined') return emptyOrdersStorage()
     const saved = uni.getStorageSync(ORDERS_STORAGE_KEY)
-    return Array.isArray(saved) ? saved : []
+    return normalizeOrdersStorage(saved)
+  } catch (error) {
+    return emptyOrdersStorage()
+  }
+}
+
+function readStoredOrders(roomId) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  if (!normalizedRoomId) return []
+
+  try {
+    const storage = readOrdersStorage()
+    return (storage.rooms[normalizedRoomId] || [])
+      .map(order => {
+        const orderRoomId = normalizeOrderRoomId(order)
+        return {
+          ...order,
+          roomId: orderRoomId || normalizedRoomId,
+        }
+      })
+      .filter(order => normalizeOrderRoomId(order) === normalizedRoomId)
   } catch (error) {
     return []
   }
 }
 
-function writeStoredOrders(orders) {
+function writeStoredOrders(orders, roomId) {
   try {
     if (typeof uni === 'undefined') return
-    uni.setStorageSync(ORDERS_STORAGE_KEY, orders)
+    const normalizedRoomId = normalizeRoomId(roomId)
+    if (!normalizedRoomId) return
+
+    const storage = readOrdersStorage()
+    storage.rooms[normalizedRoomId] = (Array.isArray(orders) ? orders : [])
+      .filter(order => {
+        const orderRoomId = normalizeOrderRoomId(order)
+        return !orderRoomId || orderRoomId === normalizedRoomId
+      })
+      .map(order => ({
+        ...order,
+        roomId: normalizedRoomId,
+      }))
+    uni.setStorageSync(ORDERS_STORAGE_KEY, storage)
   } catch (error) {
     console.warn('保存订单历史失败', error)
   }
@@ -82,6 +185,70 @@ function writeStoredAvatar(url) {
     uni.setStorageSync(USER_AVATAR_STORAGE_KEY, url)
   } catch (error) {
     console.warn('保存头像失败', error)
+  }
+}
+
+function emptyFavoritesStorage() {
+  return {
+    version: 1,
+    rooms: {},
+  }
+}
+
+function normalizeFavoriteId(itemId) {
+  return itemId ? String(itemId) : ''
+}
+
+function normalizeFavoritesStorage(saved) {
+  if (Array.isArray(saved)) {
+    const storage = emptyFavoritesStorage()
+    const roomId = initialRoomId || LEGACY_ORDERS_ROOM_KEY
+    storage.rooms[roomId] = Array.from(new Set(saved.map(normalizeFavoriteId).filter(Boolean)))
+    return storage
+  }
+
+  if (saved && typeof saved === 'object' && saved.rooms && typeof saved.rooms === 'object') {
+    const storage = emptyFavoritesStorage()
+    Object.keys(saved.rooms).forEach(roomKey => {
+      const normalizedRoomKey = roomKey === LEGACY_ORDERS_ROOM_KEY ? roomKey : normalizeRoomId(roomKey)
+      if (!normalizedRoomKey || !Array.isArray(saved.rooms[roomKey])) return
+      storage.rooms[normalizedRoomKey] = Array.from(new Set(saved.rooms[roomKey].map(normalizeFavoriteId).filter(Boolean)))
+    })
+    return storage
+  }
+
+  return emptyFavoritesStorage()
+}
+
+function readFavoritesStorage() {
+  try {
+    if (typeof uni === 'undefined') return emptyFavoritesStorage()
+    const saved = uni.getStorageSync(USER_FAVORITES_STORAGE_KEY)
+    return normalizeFavoritesStorage(saved)
+  } catch (error) {
+    return emptyFavoritesStorage()
+  }
+}
+
+function readStoredFavorites(roomId) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  if (!normalizedRoomId) return []
+
+  const storage = readFavoritesStorage()
+  return Array.from(new Set((storage.rooms[normalizedRoomId] || []).map(normalizeFavoriteId).filter(Boolean)))
+}
+
+function writeStoredFavorites(itemIds, roomId) {
+  try {
+    if (typeof uni === 'undefined') return
+    const normalizedRoomId = normalizeRoomId(roomId)
+    if (!normalizedRoomId) return
+
+    const storage = readFavoritesStorage()
+    storage.rooms[normalizedRoomId] = Array.from(new Set((Array.isArray(itemIds) ? itemIds : []).map(normalizeFavoriteId).filter(Boolean)))
+    uni.setStorageSync(USER_FAVORITES_STORAGE_KEY, storage)
+  } catch (error) {
+    console.warn('保存收藏菜品失败', error)
   }
 }
 
@@ -146,6 +313,7 @@ function cloneCartItem(item) {
     id: item._id || item.id,
     name: item.name,
     desc: item.desc,
+    fullDesc: item.fullDesc || '',
     category: item.category,
     emoji: item.emoji,
     image: item.image,
@@ -171,7 +339,7 @@ const store = reactive({
   openid: cloudCheckLogin()?.openid || '',
 
   // 房间号
-  roomId: getStoredRoomId(),
+  roomId: initialRoomId,
   roomInfo: null,
 
   // 菜品数据（初始为默认数据，云端加载后替换）
@@ -206,7 +374,10 @@ const store = reactive({
   cart: [],
 
   // 已下单历史（带状态）
-  orders: readStoredOrders(),
+  orders: readStoredOrders(initialRoomId),
+
+  // 当前房间收藏菜品 id
+  favoriteItemIds: readStoredFavorites(initialRoomId),
 
   // 催单时间记录 { orderId: lastRushTimeISO }
   rushTimes: readRushTimes(),
@@ -215,9 +386,9 @@ const store = reactive({
   user: {
     name: '小可爱',
     avatarUrl: readStoredAvatar(),
-    feedCount: 23,
-    privileges: 5,
-    favorites: 8,
+    feedCount: 0,
+    privileges: 0,
+    favorites: 0,
     dislikes: ['香菜', '苦瓜'],
     allergies: '无',
   },
@@ -232,37 +403,9 @@ const store = reactive({
   },
 
   // 特权兑换券
-  coupons: [
-    {
-      id: 1,
-      name: '15分钟肩颈按摩券',
-      desc: '累计投喂 20 次即可兑换',
-      emoji: '💆‍♀️',
-      color: '#FFF7E6',
-      required: 20,
-      available: true,
-    },
-    {
-      id: 2,
-      name: '免跑腿代买券',
-      desc: '累计投喂 30 次即可兑换',
-      emoji: '🛍️',
-      color: '#F0F5FF',
-      required: 30,
-      available: false,
-    },
-    {
-      id: 3,
-      name: '指定电影陪看券',
-      desc: '累计投喂 50 次即可兑换',
-      emoji: '🎬',
-      color: '#F6FFED',
-      required: 50,
-      available: false,
-    },
-  ],
+  coupons: COUPON_DEFINITIONS.map(coupon => ({ ...coupon })),
 
-  // 撒娇备注
+  // 订单备注
   cartNote: '',
 
   // 催单通知队列（主厨端用）
@@ -271,6 +414,22 @@ const store = reactive({
   // 当前正在展示的催单通知（主厨端所有页面共用）
   activeRushNotification: null,
 })
+
+refreshUserStats()
+
+export function refreshUserStats() {
+  const currentRoomId = normalizeRoomId(store.roomId)
+  const feedCount = currentRoomId
+    ? store.orders.filter((order) => normalizeOrderRoomId(order) === currentRoomId).length
+    : 0
+
+  store.user.feedCount = feedCount
+  store.user.favorites = store.favoriteItemIds.length
+  store.coupons.forEach((coupon) => {
+    coupon.available = feedCount >= coupon.required
+  })
+  store.user.privileges = store.coupons.filter((coupon) => coupon.available).length
+}
 
 // ========== 登录管理 ==========
 
@@ -305,15 +464,47 @@ export function clearRole() {
   writeStoredRole('')
 }
 
+function replaceStoreOrders(orders, roomId = store.roomId) {
+  store.orders.splice(0, store.orders.length, ...(Array.isArray(orders) ? orders : []))
+  ordersRoomId = normalizeRoomId(roomId)
+  refreshUserStats()
+}
+
+function ensureOrdersForCurrentRoom() {
+  const currentRoomId = normalizeRoomId(store.roomId)
+  if (ordersRoomId === currentRoomId) return
+  replaceStoreOrders(readStoredOrders(currentRoomId), currentRoomId)
+  store.ordersLoaded = false
+}
+
+function persistCurrentRoomOrders() {
+  writeStoredOrders(store.orders, store.roomId)
+}
+
+function isCurrentRoomOrder(order) {
+  const currentRoomId = normalizeRoomId(store.roomId)
+  if (!currentRoomId) return false
+  return normalizeOrderRoomId(order) === currentRoomId
+}
+
 // ========== 房间管理 ==========
 
 export function setRoomId(roomId) {
   const normalizedRoomId = normalizeRoomId(roomId)
-  if (store.roomId && store.roomId !== normalizedRoomId) {
+  const roomChanged = store.roomId !== normalizedRoomId
+  if (store.roomId && roomChanged) {
     stopAllMenuRealtimeSync()
   }
   store.roomId = normalizedRoomId
   setStoredRoomId(normalizedRoomId)
+  if (roomChanged) {
+    store.favoriteItemIds.splice(0, store.favoriteItemIds.length, ...readStoredFavorites(normalizedRoomId))
+    store.menuItems = []
+    store.menuLoaded = false
+    replaceStoreOrders(readStoredOrders(normalizedRoomId), normalizedRoomId)
+    store.ordersLoaded = false
+    clearCart()
+  }
 }
 
 export function getRoomId() {
@@ -324,6 +515,10 @@ export function clearRoomId() {
   stopAllMenuRealtimeSync()
   store.roomId = ''
   store.roomInfo = null
+  store.favoriteItemIds.splice(0, store.favoriteItemIds.length)
+  replaceStoreOrders([], '')
+  store.ordersLoaded = false
+  clearCart()
   clearStoredRoomId()
 }
 
@@ -584,14 +779,24 @@ export function stopChefOrdersSync(owner = 'default') {
  * 从云端加载订单到 store
  */
 export async function loadOrdersFromCloud() {
+  ensureOrdersForCurrentRoom()
+  const roomId = normalizeRoomId(store.roomId)
+  if (!roomId) {
+    replaceStoreOrders([], '')
+    store.ordersLoaded = true
+    return store.orders
+  }
+
   try {
-    const cloudOrders = await cloudFetchOrders(store.roomId)
+    const cloudOrders = await cloudFetchOrders(roomId)
     if (cloudOrders !== null) {
       // 云端有数据，合并本地
       const localMap = {}
       store.orders.forEach(o => { localMap[o.id] = o })
 
       cloudOrders.forEach(co => {
+        const cloudRoomId = normalizeOrderRoomId(co) || roomId
+        if (cloudRoomId !== roomId) return
         const localId = co.id || co._id
 
         // 跳过正在操作中的订单，避免覆盖乐观更新
@@ -626,6 +831,7 @@ export async function loadOrdersFromCloud() {
 
           // 更新本地记录的云端字段
           Object.assign(local, {
+            roomId,
             _cloudId: co._id,
             status: mergedStatus,
             acceptedAt: cloudPriority >= 1 ? (co.acceptedAt || local.acceptedAt) : local.acceptedAt,
@@ -638,12 +844,14 @@ export async function loadOrdersFromCloud() {
           // 云端有但本地没有，添加到本地
           store.orders.push({
             ...co,
+            roomId,
             _cloudId: co._id,
           })
         }
       })
 
-      writeStoredOrders(store.orders)
+      persistCurrentRoomOrders()
+      refreshUserStats()
       store.ordersLoaded = true
       console.log('[Store] 订单已从云端同步')
     }
@@ -742,11 +950,13 @@ export function clearCart() {
 }
 
 export async function createOrderFromCart() {
+  ensureOrdersForCurrentRoom()
   if (store.cart.length === 0) return null
 
   const now = new Date()
   const order = {
     id: `GF${now.getTime()}`,
+    roomId: store.roomId,
     createdAt: now.toISOString(),
     note: store.cartNote,
     totalCount: getCartTotal(),
@@ -760,8 +970,8 @@ export async function createOrderFromCart() {
   }
 
   store.orders.unshift(order)
-  store.user.feedCount += 1
-  writeStoredOrders(store.orders)
+  persistCurrentRoomOrders()
+  refreshUserStats()
   clearCart()
 
   // 异步上传到云端（不阻塞UI）
@@ -769,7 +979,7 @@ export async function createOrderFromCart() {
     const cloudId = await cloudAddOrder(order, store.roomId)
     if (cloudId) {
       order._cloudId = cloudId
-      writeStoredOrders(store.orders)
+      persistCurrentRoomOrders()
     }
   } catch (e) {
     console.warn('[Store] 订单上传云端失败，仅保存本地', e)
@@ -779,8 +989,10 @@ export async function createOrderFromCart() {
 }
 
 export function clearOrders() {
+  ensureOrdersForCurrentRoom()
   store.orders.splice(0, store.orders.length)
-  writeStoredOrders(store.orders)
+  persistCurrentRoomOrders()
+  refreshUserStats()
 }
 
 export function updateUserAvatar(url) {
@@ -788,10 +1000,36 @@ export function updateUserAvatar(url) {
   writeStoredAvatar(store.user.avatarUrl)
 }
 
+export function getCurrentRoomFavoriteIds() {
+  return store.favoriteItemIds
+}
+
+export function isFavoriteItem(itemId) {
+  const normalizedItemId = normalizeFavoriteId(itemId)
+  return !!normalizedItemId && store.favoriteItemIds.includes(normalizedItemId)
+}
+
+export function toggleFavoriteItem(itemId) {
+  const normalizedItemId = normalizeFavoriteId(itemId)
+  if (!normalizedItemId || !store.roomId) return false
+
+  const existingIndex = store.favoriteItemIds.indexOf(normalizedItemId)
+  if (existingIndex >= 0) {
+    store.favoriteItemIds.splice(existingIndex, 1)
+  } else {
+    store.favoriteItemIds.push(normalizedItemId)
+  }
+
+  writeStoredFavorites(store.favoriteItemIds, store.roomId)
+  refreshUserStats()
+  return existingIndex < 0
+}
+
 // ========== 主厨端操作 ==========
 
 export async function acceptOrder(orderId) {
-  const order = store.orders.find((o) => o.id === orderId)
+  ensureOrdersForCurrentRoom()
+  const order = store.orders.find((o) => o.id === orderId && isCurrentRoomOrder(o))
   if (order && order.status === 'pending') {
     const prevStatus = order.status
     const prevAcceptedAt = order.acceptedAt
@@ -799,7 +1037,7 @@ export async function acceptOrder(orderId) {
     try {
       order.status = 'accepted'
       order.acceptedAt = new Date().toISOString()
-      writeStoredOrders(store.orders)
+      persistCurrentRoomOrders()
 
       // 同步到云端
       if (order._cloudId) {
@@ -812,7 +1050,7 @@ export async function acceptOrder(orderId) {
           console.error('[Store] 接单云端同步失败，回滚本地状态')
           order.status = prevStatus
           order.acceptedAt = prevAcceptedAt
-          writeStoredOrders(store.orders)
+          persistCurrentRoomOrders()
           return false
         }
       }
@@ -827,7 +1065,8 @@ export async function acceptOrder(orderId) {
 }
 
 export async function startCooking(orderId) {
-  const order = store.orders.find((o) => o.id === orderId)
+  ensureOrdersForCurrentRoom()
+  const order = store.orders.find((o) => o.id === orderId && isCurrentRoomOrder(o))
   if (order && order.status === 'accepted') {
     const prevStatus = order.status
     const prevCookingAt = order.cookingAt
@@ -835,7 +1074,7 @@ export async function startCooking(orderId) {
     try {
       order.status = 'cooking'
       order.cookingAt = new Date().toISOString()
-      writeStoredOrders(store.orders)
+      persistCurrentRoomOrders()
 
       // 同步到云端
       if (order._cloudId) {
@@ -847,7 +1086,7 @@ export async function startCooking(orderId) {
           console.error('[Store] 开始制作云端同步失败，回滚本地状态')
           order.status = prevStatus
           order.cookingAt = prevCookingAt
-          writeStoredOrders(store.orders)
+          persistCurrentRoomOrders()
           return false
         }
       }
@@ -862,7 +1101,8 @@ export async function startCooking(orderId) {
 }
 
 export async function completeOrder(orderId) {
-  const order = store.orders.find((o) => o.id === orderId)
+  ensureOrdersForCurrentRoom()
+  const order = store.orders.find((o) => o.id === orderId && isCurrentRoomOrder(o))
   if (order && (order.status === 'cooking' || order.status === 'accepted')) {
     const prevStatus = order.status
     const prevCompletedAt = order.completedAt
@@ -871,7 +1111,7 @@ export async function completeOrder(orderId) {
       order.status = 'done'
       order.completedAt = new Date().toISOString()
       store.chef.todayCompleted += 1
-      writeStoredOrders(store.orders)
+      persistCurrentRoomOrders()
 
       // 同步到云端
       if (order._cloudId) {
@@ -884,7 +1124,7 @@ export async function completeOrder(orderId) {
           order.status = prevStatus
           order.completedAt = prevCompletedAt
           store.chef.todayCompleted -= 1
-          writeStoredOrders(store.orders)
+          persistCurrentRoomOrders()
           return false
         }
       }
@@ -924,6 +1164,7 @@ export function getRushCooldownRemaining(orderId) {
  * @returns {Promise<{success: boolean, message: string, cooldownRemaining?: number}>}
  */
 export async function rushOrderAction(orderId) {
+  ensureOrdersForCurrentRoom()
   const remaining = getRushCooldownRemaining(orderId)
   if (remaining > 0) {
     const mins = Math.ceil(remaining / 60000)
@@ -934,7 +1175,7 @@ export async function rushOrderAction(orderId) {
     }
   }
 
-  const order = store.orders.find(o => o.id === orderId)
+  const order = store.orders.find(o => o.id === orderId && isCurrentRoomOrder(o))
   if (!order) {
     return { success: false, message: '订单不存在' }
   }
@@ -951,7 +1192,7 @@ export async function rushOrderAction(orderId) {
   // 更新本地订单催单信息
   order.rushLastTime = nowISO
   order.rushCount = (order.rushCount || 0) + 1
-  writeStoredOrders(store.orders)
+  persistCurrentRoomOrders()
 
   // 同步到云端
   if (order._cloudId) {
@@ -966,16 +1207,25 @@ export function getAvailableItems() {
   return store.menuItems.filter((item) => item.available !== false)
 }
 
+// 获取当前房间订单
+export function getCurrentRoomOrders() {
+  ensureOrdersForCurrentRoom()
+  return store.orders.filter((o) => isCurrentRoomOrder(o))
+}
+
 // 获取各状态订单
 export function getOrdersByStatus(status) {
-  return store.orders.filter((o) => o.status === status)
+  ensureOrdersForCurrentRoom()
+  return store.orders.filter((o) => isCurrentRoomOrder(o) && o.status === status)
 }
 
 // 获取今日订单
 export function getTodayOrders() {
+  ensureOrdersForCurrentRoom()
   const today = new Date()
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   return store.orders.filter((o) => {
+    if (!isCurrentRoomOrder(o)) return false
     const d = new Date(o.createdAt)
     const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     return dStr === todayStr

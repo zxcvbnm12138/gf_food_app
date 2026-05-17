@@ -100,7 +100,7 @@
         <text class="modal-emoji">🎉</text>
         <text class="modal-title">恭喜抽中！</text>
         <text class="modal-item-name">{{ pickedItem.name }}</text>
-        <text class="modal-item-desc">{{ pickedItem.desc }}</text>
+        <text class="modal-item-desc">{{ getDisplayDesc(pickedItem) }}</text>
         <view class="modal-actions">
           <view class="modal-btn secondary" @click="handleRandomPick">
             <text class="modal-btn-text secondary">再扭一次</text>
@@ -135,6 +135,7 @@ const menuItems = computed(() => getAvailableItems())
 const user = computed(() => store.user)
 const roomId = computed(() => store.roomId)
 const MENU_REALTIME_OWNER = 'customer-index'
+const getDisplayDesc = (item) => item.fullDesc || item.desc || ''
 
 // 菜品轮询刷新
 let menuPollTimer = null

@@ -1,0 +1,9 @@
+{
+  "name": "getUserRooms",
+  "version": "1.0.0",
+  "description": "投喂小厨房 - 获取用户历史房间云函数",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}
