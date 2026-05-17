@@ -118,8 +118,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import store, { loadMenuFromCloud, getAvailableItems, getRoomId } from '@/store/index.js'
+import { ref, computed } from 'vue'
+import { onShow, onHide } from '@dcloudio/uni-app'
+import store, {
+  loadMenuFromCloud,
+  getAvailableItems,
+  getRoomId,
+  startMenuRealtimeSync,
+  stopMenuRealtimeSync,
+} from '@/store/index.js'
 import { checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
@@ -127,9 +134,18 @@ const categories = computed(() => store.categories)
 const menuItems = computed(() => getAvailableItems())
 const user = computed(() => store.user)
 const roomId = computed(() => store.roomId)
+const MENU_REALTIME_OWNER = 'customer-index'
 
-// 页面显示时加载云端菜品
-onMounted(async () => {
+// 菜品轮询刷新
+let menuPollTimer = null
+const MENU_POLL_INTERVAL = 5000 // 实时监听失败时，5秒轮询兜底
+
+const refreshMenu = async () => {
+  await loadMenuFromCloud()
+}
+
+// 页面显示时加载云端菜品 + 启动轮询
+onShow(() => {
   // 登录态检查
   const loginData = checkLogin()
   if (!loginData || !loginData.openid) {
@@ -141,9 +157,20 @@ onMounted(async () => {
     uni.reLaunch({ url: '/pages/login/login' })
     return
   }
-  // 加载云端菜品
-  if (!store.menuLoaded) {
-    await loadMenuFromCloud()
+  // 每次页面可见时刷新菜品
+  refreshMenu()
+  startMenuRealtimeSync(MENU_REALTIME_OWNER)
+  if (!menuPollTimer) {
+    menuPollTimer = setInterval(refreshMenu, MENU_POLL_INTERVAL)
+  }
+})
+
+// 页面隐藏时停止轮询
+onHide(() => {
+  stopMenuRealtimeSync(MENU_REALTIME_OWNER)
+  if (menuPollTimer) {
+    clearInterval(menuPollTimer)
+    menuPollTimer = null
   }
 })
 
