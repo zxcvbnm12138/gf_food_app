@@ -13,6 +13,9 @@ import {
   fetchOrders as cloudFetchOrders,
   updateOrderInCloud,
   rushOrderInCloud,
+  getStoredRoomId,
+  setStoredRoomId,
+  clearStoredRoomId,
 } from '@/services/cloud.js'
 
 const ORDERS_STORAGE_KEY = 'gf_food_orders'
@@ -20,6 +23,12 @@ const USER_AVATAR_STORAGE_KEY = 'gf_food_user_avatar'
 const ROLE_STORAGE_KEY = 'gf_food_role'
 const CHEF_AVATAR_STORAGE_KEY = 'gf_food_chef_avatar'
 const RUSH_STORAGE_KEY = 'gf_food_rush_times'
+
+// 正在进行云端操作的订单ID集合（操作锁）
+const pendingOperations = new Set()
+
+// 状态优先级：只允许前进，不允许回退
+const STATUS_PRIORITY = { pending: 0, accepted: 1, cooking: 2, done: 3 }
 
 function readStoredOrders() {
   try {
@@ -143,6 +152,10 @@ const store = reactive({
   isLoggedIn: !!cloudCheckLogin(),
   openid: cloudCheckLogin()?.openid || '',
 
+  // 房间号
+  roomId: getStoredRoomId(),
+  roomInfo: null,
+
   // 菜品数据（初始为默认数据，云端加载后替换）
   menuItems: getDefaultMenuItems(),
 
@@ -233,6 +246,9 @@ const store = reactive({
 
   // 撒娇备注
   cartNote: '',
+
+  // 催单通知队列（主厨端用）
+  rushNotifications: [],
 })
 
 // ========== 登录管理 ==========
@@ -268,6 +284,27 @@ export function clearRole() {
   writeStoredRole('')
 }
 
+// ========== 房间管理 ==========
+
+export function setRoomId(roomId) {
+  store.roomId = roomId
+  setStoredRoomId(roomId)
+}
+
+export function getRoomId() {
+  return store.roomId
+}
+
+export function clearRoomId() {
+  store.roomId = ''
+  store.roomInfo = null
+  clearStoredRoomId()
+}
+
+export function setRoomInfo(info) {
+  store.roomInfo = info
+}
+
 // ========== 菜品云端操作 ==========
 
 /**
@@ -275,10 +312,10 @@ export function clearRole() {
  */
 export async function loadMenuFromCloud() {
   try {
-    const items = await cloudFetchMenuItems()
+    const items = await cloudFetchMenuItems(store.roomId)
     store.menuItems = items
     store.menuLoaded = true
-    console.log('[Store] 菜品已加载，共', items.length, '道')
+    console.log('[Store] 菜品已加载，共', items.length, '道, roomId:', store.roomId)
     return items
   } catch (e) {
     console.error('[Store] 加载菜品失败:', e)
@@ -290,7 +327,7 @@ export async function loadMenuFromCloud() {
  * 新增菜品到云端
  */
 export async function addMenuItemToCloud(data) {
-  const id = await cloudAddMenuItem(data)
+  const id = await cloudAddMenuItem(data, store.roomId)
   if (id) {
     // 刷新列表
     await loadMenuFromCloud()
@@ -355,7 +392,7 @@ export async function toggleItemAvailability(itemId) {
  */
 export async function loadOrdersFromCloud() {
   try {
-    const cloudOrders = await cloudFetchOrders()
+    const cloudOrders = await cloudFetchOrders(store.roomId)
     if (cloudOrders !== null) {
       // 云端有数据，合并本地
       const localMap = {}
@@ -363,14 +400,44 @@ export async function loadOrdersFromCloud() {
 
       cloudOrders.forEach(co => {
         const localId = co.id || co._id
+
+        // 跳过正在操作中的订单，避免覆盖乐观更新
+        if (pendingOperations.has(localId)) {
+          console.log('[Store] 跳过合并（操作锁中）:', localId)
+          return
+        }
+
         if (localMap[localId]) {
+          const local = localMap[localId]
+          // 检测催单通知（仅主厨端关心）
+          if (store.currentRole === 'chef') {
+            const oldRushCount = local.rushCount || 0
+            const newRushCount = co.rushCount || 0
+            if (newRushCount > oldRushCount) {
+              // 有新催单！推入通知队列
+              store.rushNotifications.push({
+                orderId: localId,
+                orderShortId: localId.slice(-6),
+                rushCount: newRushCount,
+                rushTime: co.rushLastTime || new Date().toISOString(),
+                items: (local.items || co.items || []).map(i => i.name).slice(0, 3).join('、'),
+                timestamp: Date.now(),
+              })
+            }
+          }
+
+          // 状态优先级保护：只允许前进，不允许回退
+          const cloudPriority = STATUS_PRIORITY[co.status] ?? -1
+          const localPriority = STATUS_PRIORITY[local.status] ?? -1
+          const mergedStatus = cloudPriority >= localPriority ? co.status : local.status
+
           // 更新本地记录的云端字段
-          Object.assign(localMap[localId], {
+          Object.assign(local, {
             _cloudId: co._id,
-            status: co.status || localMap[localId].status,
-            acceptedAt: co.acceptedAt || localMap[localId].acceptedAt,
-            cookingAt: co.cookingAt || localMap[localId].cookingAt,
-            completedAt: co.completedAt || localMap[localId].completedAt,
+            status: mergedStatus,
+            acceptedAt: cloudPriority >= 1 ? (co.acceptedAt || local.acceptedAt) : local.acceptedAt,
+            cookingAt: cloudPriority >= 2 ? (co.cookingAt || local.cookingAt) : local.cookingAt,
+            completedAt: cloudPriority >= 3 ? (co.completedAt || local.completedAt) : local.completedAt,
             rushLastTime: co.rushLastTime || null,
             rushCount: co.rushCount || 0,
           })
@@ -392,6 +459,20 @@ export async function loadOrdersFromCloud() {
     console.error('[Store] 加载订单失败:', e)
     return store.orders
   }
+}
+
+/**
+ * 消费（弹出）一个催单通知
+ */
+export function popRushNotification() {
+  return store.rushNotifications.shift() || null
+}
+
+/**
+ * 清空所有催单通知
+ */
+export function clearRushNotifications() {
+  store.rushNotifications.splice(0, store.rushNotifications.length)
 }
 
 // ========== 购物车操作 ==========
@@ -459,7 +540,7 @@ export async function createOrderFromCart() {
 
   // 异步上传到云端（不阻塞UI）
   try {
-    const cloudId = await cloudAddOrder(order)
+    const cloudId = await cloudAddOrder(order, store.roomId)
     if (cloudId) {
       order._cloudId = cloudId
       writeStoredOrders(store.orders)
@@ -486,17 +567,34 @@ export function updateUserAvatar(url) {
 export async function acceptOrder(orderId) {
   const order = store.orders.find((o) => o.id === orderId)
   if (order && order.status === 'pending') {
-    order.status = 'accepted'
-    order.acceptedAt = new Date().toISOString()
-    writeStoredOrders(store.orders)
+    const prevStatus = order.status
+    const prevAcceptedAt = order.acceptedAt
+    pendingOperations.add(orderId) // 加锁
+    try {
+      order.status = 'accepted'
+      order.acceptedAt = new Date().toISOString()
+      writeStoredOrders(store.orders)
 
-    // 同步到云端
-    if (order._cloudId) {
-      await updateOrderInCloud(order._cloudId, {
-        status: 'accepted',
-        acceptedAt: order.acceptedAt,
-      })
+      // 同步到云端
+      if (order._cloudId) {
+        const success = await updateOrderInCloud(order._cloudId, {
+          status: 'accepted',
+          acceptedAt: order.acceptedAt,
+        })
+        if (!success) {
+          // 云端更新失败，回滚本地状态
+          console.error('[Store] 接单云端同步失败，回滚本地状态')
+          order.status = prevStatus
+          order.acceptedAt = prevAcceptedAt
+          writeStoredOrders(store.orders)
+          return false
+        }
+      }
+    } finally {
+      pendingOperations.delete(orderId) // 解锁
     }
+    // 操作后主动同步一次，确保本地与云端一致
+    loadOrdersFromCloud()
     return true
   }
   return false
@@ -505,17 +603,33 @@ export async function acceptOrder(orderId) {
 export async function startCooking(orderId) {
   const order = store.orders.find((o) => o.id === orderId)
   if (order && order.status === 'accepted') {
-    order.status = 'cooking'
-    order.cookingAt = new Date().toISOString()
-    writeStoredOrders(store.orders)
+    const prevStatus = order.status
+    const prevCookingAt = order.cookingAt
+    pendingOperations.add(orderId) // 加锁
+    try {
+      order.status = 'cooking'
+      order.cookingAt = new Date().toISOString()
+      writeStoredOrders(store.orders)
 
-    // 同步到云端
-    if (order._cloudId) {
-      await updateOrderInCloud(order._cloudId, {
-        status: 'cooking',
-        cookingAt: order.cookingAt,
-      })
+      // 同步到云端
+      if (order._cloudId) {
+        const success = await updateOrderInCloud(order._cloudId, {
+          status: 'cooking',
+          cookingAt: order.cookingAt,
+        })
+        if (!success) {
+          console.error('[Store] 开始制作云端同步失败，回滚本地状态')
+          order.status = prevStatus
+          order.cookingAt = prevCookingAt
+          writeStoredOrders(store.orders)
+          return false
+        }
+      }
+    } finally {
+      pendingOperations.delete(orderId) // 解锁
     }
+    // 操作后主动同步一次
+    loadOrdersFromCloud()
     return true
   }
   return false
@@ -524,18 +638,35 @@ export async function startCooking(orderId) {
 export async function completeOrder(orderId) {
   const order = store.orders.find((o) => o.id === orderId)
   if (order && (order.status === 'cooking' || order.status === 'accepted')) {
-    order.status = 'done'
-    order.completedAt = new Date().toISOString()
-    store.chef.todayCompleted += 1
-    writeStoredOrders(store.orders)
+    const prevStatus = order.status
+    const prevCompletedAt = order.completedAt
+    pendingOperations.add(orderId) // 加锁
+    try {
+      order.status = 'done'
+      order.completedAt = new Date().toISOString()
+      store.chef.todayCompleted += 1
+      writeStoredOrders(store.orders)
 
-    // 同步到云端
-    if (order._cloudId) {
-      await updateOrderInCloud(order._cloudId, {
-        status: 'done',
-        completedAt: order.completedAt,
-      })
+      // 同步到云端
+      if (order._cloudId) {
+        const success = await updateOrderInCloud(order._cloudId, {
+          status: 'done',
+          completedAt: order.completedAt,
+        })
+        if (!success) {
+          console.error('[Store] 完成制作云端同步失败，回滚本地状态')
+          order.status = prevStatus
+          order.completedAt = prevCompletedAt
+          store.chef.todayCompleted -= 1
+          writeStoredOrders(store.orders)
+          return false
+        }
+      }
+    } finally {
+      pendingOperations.delete(orderId) // 解锁
     }
+    // 操作后主动同步一次
+    loadOrdersFromCloud()
     return true
   }
   return false

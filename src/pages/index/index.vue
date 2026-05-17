@@ -11,6 +11,9 @@
           <view class="hd-left">
             <text class="greeting-sub">{{ greetingText }} ☀️</text>
             <text class="greeting-main">今天想吃点什么？</text>
+            <view v-if="roomId" class="room-badge-home">
+              <text class="room-badge-home-text">🏠 {{ roomId }}</text>
+            </view>
           </view>
           <view class="avatar-wrap" @click="goProfile">
             <view class="avatar">
@@ -116,19 +119,25 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import store, { loadMenuFromCloud, getAvailableItems } from '@/store/index.js'
+import store, { loadMenuFromCloud, getAvailableItems, getRoomId } from '@/store/index.js'
 import { checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
 const categories = computed(() => store.categories)
 const menuItems = computed(() => getAvailableItems())
 const user = computed(() => store.user)
+const roomId = computed(() => store.roomId)
 
 // 页面显示时加载云端菜品
 onMounted(async () => {
   // 登录态检查
   const loginData = checkLogin()
   if (!loginData || !loginData.openid) {
+    uni.reLaunch({ url: '/pages/login/login' })
+    return
+  }
+  // 房间检查
+  if (!store.roomId) {
     uni.reLaunch({ url: '/pages/login/login' })
     return
   }
@@ -601,6 +610,10 @@ const goDetail = (id) => {
   font-weight: bold;
   font-size: 28rpx;
 }
+
+/* 房间号标签 */
+.room-badge-home { padding: 6rpx 16rpx; background: #FFF1F0; border-radius: 16rpx; align-self: flex-start; }
+.room-badge-home-text { font-size: 20rpx; color: #FF4D4F; font-weight: bold; letter-spacing: 2rpx; font-family: 'Courier New', monospace; }
 
 .bottom-spacer {
   height: 160rpx;

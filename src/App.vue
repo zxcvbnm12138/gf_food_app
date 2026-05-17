@@ -1,5 +1,5 @@
 <script>
-import { getRole } from '@/store/index.js'
+import { getRole, getRoomId } from '@/store/index.js'
 import { initCloud, checkLogin } from '@/services/cloud.js'
 
 export default {
@@ -11,19 +11,20 @@ export default {
     initCloud()
     // #endif
 
-    // 检查登录态和角色
+    // 检查登录态、房间和角色
     const loginData = checkLogin()
     const role = getRole()
+    const roomId = getRoomId()
 
-    if (loginData && loginData.openid && role) {
-      // 已登录且有角色，跳转到对应端
+    if (loginData && loginData.openid && role && roomId) {
+      // 已登录 + 有房间 + 有角色，跳转到对应端
       if (role === 'customer') {
         uni.switchTab({ url: '/pages/index/index' })
       } else if (role === 'chef') {
         uni.switchTab({ url: '/pages/chef/dashboard' })
       }
     }
-    // 如果没有登录或没有角色，留在 login 页
+    // 如果缺少任何条件，留在 login 页
   },
   onShow: function () {
     console.log('App Show')

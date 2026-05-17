@@ -151,6 +151,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { onShow, onHide } from '@dcloudio/uni-app'
 import store, { loadOrdersFromCloud, getRushCooldownRemaining, rushOrderAction } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
@@ -174,11 +175,40 @@ const initialDate = sortedOrders.value[0] ? new Date(sortedOrders.value[0].creat
 const activeMonth = ref(new Date(initialDate.getFullYear(), initialDate.getMonth(), 1))
 const selectedDate = ref(toDateKey(initialDate))
 
-// 加载云端订单
-onMounted(async () => {
-  if (!store.ordersLoaded) {
+// 云端订单轮询，实时同步主厨端的状态更新
+let pollTimer = null
+const refreshOrders = async () => {
+  try {
     await loadOrdersFromCloud()
+  } catch (e) {
+    console.warn('[CustomerOrders] 刷新订单失败', e)
   }
+}
+
+const startPolling = () => {
+  refreshOrders()
+  if (!pollTimer) {
+    pollTimer = setInterval(refreshOrders, 5000)
+  }
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+onShow(() => {
+  startPolling()
+})
+
+onHide(() => {
+  stopPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 
 const monthLabel = computed(() => {

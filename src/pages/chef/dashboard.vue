@@ -63,14 +63,74 @@
       </view>
     </scroll-view>
     <ChefTabBar :current="0" />
+
+    <!-- 催单通知弹窗 -->
+    <view class="rush-overlay" v-if="showRushAlert" @click="dismissRush">
+      <view class="rush-modal" @click.stop>
+        <view class="rush-modal-ring">
+          <text class="rush-modal-emoji">💨</text>
+        </view>
+        <text class="rush-modal-title">宝贝催单啦！</text>
+        <text class="rush-modal-order">#{{ rushAlertData.orderShortId }}</text>
+        <text class="rush-modal-items">{{ rushAlertData.items }}</text>
+        <text class="rush-modal-hint">快去看看吧，别让她等太久哦～</text>
+        <view class="rush-modal-actions">
+          <view class="rush-modal-btn" @click="dismissRush">
+            <text class="rush-modal-btn-text">知道啦 ❤️</text>
+          </view>
+          <view class="rush-modal-btn rush-go-btn" @click="goOrdersFromRush">
+            <text class="rush-modal-btn-text">去处理 ›</text>
+          </view>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole } from '@/store/index.js'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { onShow, onHide } from '@dcloudio/uni-app'
+import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud, popRushNotification } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const chef = computed(() => store.chef)
+
+// 页面显示时刷新云端订单
+let pollTimer = null
+const refreshOrders = async () => {
+  try {
+    await loadOrdersFromCloud()
+  } catch (e) {
+    console.warn('[ChefDashboard] 刷新订单失败', e)
+  }
+}
+
+const startPolling = () => {
+  refreshOrders()
+  if (!pollTimer) {
+    pollTimer = setInterval(refreshOrders, 5000)
+  }
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+// onShow: 每次页面可见时立即刷新 + 启动轮询
+onShow(() => {
+  startPolling()
+})
+
+// onHide: 页面隐藏时停止轮询，节省资源
+onHide(() => {
+  stopPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
+})
 const greetingText = computed(() => { const h = new Date().getHours(); if (h < 6) return '夜深了大厨'; if (h < 11) return '早安大厨'; if (h < 14) return '午安大厨'; if (h < 18) return '下午好大厨'; return '晚上好大厨' })
 const pendingCount = computed(() => getOrdersByStatus('pending').length)
 const cookingCount = computed(() => getOrdersByStatus('accepted').length + getOrdersByStatus('cooking').length)
@@ -84,11 +144,54 @@ const statItems = computed(() => [
 const recentPending = computed(() => getOrdersByStatus('pending').slice(0, 3))
 const fmtTime = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` }
 const orderSummary = (order) => order.items.map(i => i.name).slice(0, 3).join('、')
-const handleAccept = (id) => { acceptOrder(id); uni.showToast({ title: '已接单 🎉', icon: 'none', duration: 1500 }) }
+const handleAccept = async (id) => {
+  const success = await acceptOrder(id)
+  if (success) {
+    uni.showToast({ title: '已接单 🎉', icon: 'none', duration: 1500 })
+  } else {
+    uni.showToast({ title: '接单失败，请检查网络或云函数', icon: 'none', duration: 3000 })
+  }
+}
 const goOrders = () => uni.switchTab({ url: '/pages/chef/orders' })
 const goProfile = () => uni.switchTab({ url: '/pages/chef/profile' })
 const goMenuManage = () => uni.switchTab({ url: '/pages/chef/menu-manage' })
 const switchToCustomer = () => { setRole('customer'); uni.switchTab({ url: '/pages/index/index' }) }
+
+// ========== 催单通知 ==========
+const showRushAlert = ref(false)
+const rushAlertData = ref({ orderShortId: '', items: '', orderId: '' })
+
+watch(() => store.rushNotifications.length, (newLen) => {
+  if (newLen > 0 && !showRushAlert.value) {
+    const notification = popRushNotification()
+    if (notification) {
+      rushAlertData.value = notification
+      showRushAlert.value = true
+      // 振动反馈
+      try { uni.vibrateShort && uni.vibrateShort() } catch (e) { /* ignore */ }
+    }
+  }
+})
+
+const dismissRush = () => {
+  showRushAlert.value = false
+  // 检查是否还有更多催单通知
+  setTimeout(() => {
+    if (store.rushNotifications.length > 0) {
+      const next = popRushNotification()
+      if (next) {
+        rushAlertData.value = next
+        showRushAlert.value = true
+        try { uni.vibrateShort && uni.vibrateShort() } catch (e) { /* ignore */ }
+      }
+    }
+  }, 300)
+}
+
+const goOrdersFromRush = () => {
+  showRushAlert.value = false
+  uni.switchTab({ url: '/pages/chef/orders' })
+}
 </script>
 
 <style scoped>
@@ -151,4 +254,25 @@ const switchToCustomer = () => { setRole('customer'); uni.switchTab({ url: '/pag
 .quick-emoji { font-size: 40rpx; }
 .quick-label { font-size: 26rpx; color: #4E5969; font-weight: bold; }
 .bottom-spacer { height: 160rpx; }
+
+/* 催单通知弹窗 */
+.rush-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: fadeIn 0.2s ease; }
+.rush-modal { width: 600rpx; background: #FFFFFF; border-radius: 36rpx; padding: 52rpx 40rpx 40rpx; display: flex; flex-direction: column; align-items: center; gap: 20rpx; animation: rushBounce 0.5s ease; position: relative; overflow: hidden; }
+.rush-modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 8rpx; background: linear-gradient(90deg, #FF4D4F, #FF8C9A, #FFBB96, #FF4D4F); background-size: 300% 100%; animation: rushShine 2s linear infinite; }
+.rush-modal-ring { width: 120rpx; height: 120rpx; border-radius: 50%; background: linear-gradient(135deg, #FFF1F0, #FFD6D9); display: flex; align-items: center; justify-content: center; animation: rushPulse 1.5s ease infinite; }
+.rush-modal-emoji { font-size: 64rpx; }
+.rush-modal-title { font-size: 38rpx; font-weight: bold; color: #1D2129; }
+.rush-modal-order { font-size: 26rpx; color: #86909C; font-family: 'Courier New', monospace; letter-spacing: 4rpx; }
+.rush-modal-items { font-size: 28rpx; color: #4E5969; font-weight: bold; }
+.rush-modal-hint { font-size: 24rpx; color: #86909C; }
+.rush-modal-actions { display: flex; gap: 20rpx; width: 100%; margin-top: 12rpx; }
+.rush-modal-btn { flex: 1; height: 84rpx; border-radius: 42rpx; background: #F7F8FA; display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease; }
+.rush-modal-btn:active { transform: scale(0.95); }
+.rush-go-btn { background: linear-gradient(135deg, #FF4D4F 0%, #FF8C9A 100%); box-shadow: 0 8rpx 24rpx rgba(255,77,79,0.3); }
+.rush-modal-btn-text { font-size: 28rpx; font-weight: bold; color: #4E5969; }
+.rush-go-btn .rush-modal-btn-text { color: #FFFFFF; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rushBounce { 0% { opacity: 0; transform: scale(0.7) translateY(40rpx); } 50% { transform: scale(1.05) translateY(-10rpx); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes rushPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+@keyframes rushShine { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 </style>

@@ -6,6 +6,7 @@
 
 const CLOUD_ENV = 'cloud1-d1g59kb63451bc898'
 const LOGIN_KEY = 'gf_cloud_login'
+const ROOM_STORAGE_KEY = 'gf_food_room_id'
 
 // ========== 平台判断 ==========
 
@@ -144,6 +145,244 @@ export function logout() {
   } catch (e) { /* ignore */ }
 }
 
+// ========== 房间管理 ==========
+
+/**
+ * 生成6位英文数字混合房间号
+ */
+function generateRoomId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // 去掉容易混淆的 I/O/0/1
+  let code = ''
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return code
+}
+
+/**
+ * 读取本地缓存的房间号
+ */
+export function getStoredRoomId() {
+  try {
+    if (typeof uni === 'undefined') return ''
+    return uni.getStorageSync(ROOM_STORAGE_KEY) || ''
+  } catch (e) {
+    return ''
+  }
+}
+
+/**
+ * 保存房间号到本地缓存
+ */
+export function setStoredRoomId(roomId) {
+  try {
+    if (typeof uni === 'undefined') return
+    uni.setStorageSync(ROOM_STORAGE_KEY, roomId)
+  } catch (e) {
+    console.warn('[Cloud] 保存房间号失败', e)
+  }
+}
+
+/**
+ * 清除本地缓存的房间号
+ */
+export function clearStoredRoomId() {
+  try {
+    if (typeof uni === 'undefined') return
+    uni.removeStorageSync(ROOM_STORAGE_KEY)
+  } catch (e) { /* ignore */ }
+}
+
+/**
+ * 创建新房间
+ * @param {string} openid 创建者的 openid
+ * @returns {Promise<{roomId: string, _id: string} | null>}
+ */
+export async function createRoom(openid) {
+  if (!isCloudAvailable() || !cloudInited) {
+    // H5 环境模拟
+    const roomId = generateRoomId()
+    console.log('[Cloud] H5 模拟创建房间:', roomId)
+    setStoredRoomId(roomId)
+    return { roomId, _id: 'local_room_' + roomId }
+  }
+
+  try {
+    const db = getDB()
+    // 生成唯一房间号（重试避免冲突）
+    let roomId = ''
+    let attempts = 0
+    while (attempts < 10) {
+      roomId = generateRoomId()
+      const existing = await db.collection('rooms').where({ roomId }).count()
+      if (existing.total === 0) break
+      attempts++
+    }
+    if (attempts >= 10) {
+      console.error('[Cloud] 无法生成唯一房间号')
+      return null
+    }
+
+    const res = await db.collection('rooms').add({
+      data: {
+        roomId,
+        creatorOpenid: openid,
+        members: [openid],
+        maxMembers: 2,
+        createdAt: new Date(),
+      },
+    })
+
+    setStoredRoomId(roomId)
+    console.log('[Cloud] 创建房间成功:', roomId)
+    return { roomId, _id: res._id }
+  } catch (e) {
+    console.error('[Cloud] 创建房间失败:', e)
+    return null
+  }
+}
+
+/**
+ * 加入房间
+ * @param {string} roomId 房间号
+ * @param {string} openid 加入者的 openid
+ * @returns {Promise<{success: boolean, message: string, roomInfo?: Object}>}
+ */
+export async function joinRoom(roomId, openid) {
+  if (!roomId || roomId.length !== 6) {
+    return { success: false, message: '请输入正确的6位房间号' }
+  }
+
+  roomId = roomId.toUpperCase()
+
+  if (!isCloudAvailable() || !cloudInited) {
+    // H5 模拟
+    setStoredRoomId(roomId)
+    console.log('[Cloud] H5 模拟加入房间:', roomId)
+    return { success: true, message: '加入成功', roomInfo: { roomId, members: [openid] } }
+  }
+
+  try {
+    const db = getDB()
+    const res = await db.collection('rooms').where({ roomId }).get()
+
+    if (res.data.length === 0) {
+      return { success: false, message: '房间不存在，请检查房间号' }
+    }
+
+    const room = res.data[0]
+
+    // 已经在房间里
+    if (room.members && room.members.includes(openid)) {
+      setStoredRoomId(roomId)
+      return { success: true, message: '已在房间中', roomInfo: room }
+    }
+
+    // 检查人数限制
+    if (room.members && room.members.length >= (room.maxMembers || 2)) {
+      return { success: false, message: '房间已满，无法加入' }
+    }
+
+    // 加入房间
+    const _ = db.command
+    await db.collection('rooms').doc(room._id).update({
+      data: {
+        members: _.push([openid]),
+      },
+    })
+
+    setStoredRoomId(roomId)
+    console.log('[Cloud] 加入房间成功:', roomId)
+    return { success: true, message: '加入成功', roomInfo: { ...room, members: [...room.members, openid] } }
+  } catch (e) {
+    console.error('[Cloud] 加入房间失败:', e)
+    return { success: false, message: '加入失败，请重试' }
+  }
+}
+
+/**
+ * 获取房间信息
+ * @param {string} roomId 房间号
+ * @returns {Promise<Object|null>}
+ */
+export async function getRoomInfo(roomId) {
+  if (!roomId) return null
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return { roomId, members: [], maxMembers: 2 }
+  }
+
+  try {
+    const db = getDB()
+    const res = await db.collection('rooms').where({ roomId }).get()
+    return res.data.length > 0 ? res.data[0] : null
+  } catch (e) {
+    console.error('[Cloud] 获取房间信息失败:', e)
+    return null
+  }
+}
+
+/**
+ * 根据 openid 查找所属房间
+ * @param {string} openid
+ * @returns {Promise<string|null>} roomId
+ */
+export async function getRoomByMember(openid) {
+  if (!openid) return null
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return getStoredRoomId() || null
+  }
+
+  try {
+    const db = getDB()
+    // 注意：微信云数据库 where 支持 array contains 查询需要用 command
+    const res = await db.collection('rooms')
+      .orderBy('createdAt', 'desc')
+      .limit(20)
+      .get()
+    // 在客户端过滤包含此 openid 的房间
+    const myRoom = res.data.find(r => r.members && r.members.includes(openid))
+    return myRoom ? myRoom.roomId : null
+  } catch (e) {
+    console.error('[Cloud] 查找用户房间失败:', e)
+    return getStoredRoomId() || null
+  }
+}
+
+/**
+ * 退出房间
+ * @param {string} roomId
+ * @param {string} openid
+ * @returns {Promise<boolean>}
+ */
+export async function leaveRoom(roomId, openid) {
+  clearStoredRoomId()
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return true
+  }
+
+  try {
+    const db = getDB()
+    const res = await db.collection('rooms').where({ roomId }).get()
+    if (res.data.length === 0) return true
+
+    const room = res.data[0]
+    const _ = db.command
+    await db.collection('rooms').doc(room._id).update({
+      data: {
+        members: _.pull(openid),
+      },
+    })
+    console.log('[Cloud] 已退出房间:', roomId)
+    return true
+  } catch (e) {
+    console.error('[Cloud] 退出房间失败:', e)
+    return false
+  }
+}
+
 // ========== 菜品 CRUD ==========
 
 /**
@@ -270,7 +509,7 @@ export function getDefaultMenuItems() {
  * 从云数据库获取所有菜品
  * @returns {Promise<Array>}
  */
-export async function fetchMenuItems() {
+export async function fetchMenuItems(roomId) {
   if (!isCloudAvailable() || !cloudInited) {
     console.log('[Cloud] 使用本地默认数据')
     return getDefaultMenuItems()
@@ -278,14 +517,15 @@ export async function fetchMenuItems() {
 
   try {
     const db = getDB()
+    const query = roomId ? { roomId } : {}
     // 云数据库单次最多返回20条，分批拉取
-    const countRes = await db.collection('menu_items').count()
+    const countRes = await db.collection('menu_items').where(query).count()
     const total = countRes.total
     if (total === 0) {
       // 空集合，自动 seed
       console.log('[Cloud] 集合为空，开始 seed 默认数据...')
-      await seedMenuData()
-      return fetchMenuItems()
+      await seedMenuData(roomId)
+      return fetchMenuItems(roomId)
     }
 
     const batchTimes = Math.ceil(total / 20)
@@ -293,6 +533,7 @@ export async function fetchMenuItems() {
     for (let i = 0; i < batchTimes; i++) {
       tasks.push(
         db.collection('menu_items')
+          .where(query)
           .orderBy('sortOrder', 'asc')
           .skip(i * 20)
           .limit(20)
@@ -317,7 +558,7 @@ export async function fetchMenuItems() {
  * @param {Object} data 菜品数据
  * @returns {Promise<string|null>} 返回新文档 _id
  */
-export async function addMenuItem(data) {
+export async function addMenuItem(data, roomId) {
   if (!isCloudAvailable() || !cloudInited) {
     console.warn('[Cloud] 非云环境，无法新增菜品')
     return null
@@ -329,6 +570,7 @@ export async function addMenuItem(data) {
     const res = await db.collection('menu_items').add({
       data: {
         ...data,
+        roomId: roomId || '',
         available: data.available !== false,
         createdAt: now,
         updatedAt: now,
@@ -405,7 +647,7 @@ export async function toggleMenuItemAvailability(id, available) {
 /**
  * 首次使用时将默认菜品写入云数据库
  */
-export async function seedMenuData() {
+export async function seedMenuData(roomId) {
   if (!isCloudAvailable() || !cloudInited) {
     console.warn('[Cloud] 非云环境，无法 seed 数据')
     return false
@@ -418,13 +660,14 @@ export async function seedMenuData() {
       db.collection('menu_items').add({
         data: {
           ...item,
+          roomId: roomId || '',
           createdAt: now,
           updatedAt: now,
         },
       })
     )
     await Promise.all(promises)
-    console.log('[Cloud] Seed 默认数据成功，共', DEFAULT_MENU_ITEMS.length, '道菜品')
+    console.log('[Cloud] Seed 默认数据成功，共', DEFAULT_MENU_ITEMS.length, '道菜品, roomId:', roomId)
     return true
   } catch (e) {
     console.error('[Cloud] Seed 数据失败:', e)
@@ -480,7 +723,7 @@ async function ensureOrdersCollection() {
  * @param {Object} orderData 订单数据
  * @returns {Promise<string|null>} 返回云端文档 _id
  */
-export async function addOrder(orderData) {
+export async function addOrder(orderData, roomId) {
   if (!isCloudAvailable() || !cloudInited) {
     console.log('[Cloud] 非云环境，订单仅保存本地')
     return null
@@ -497,6 +740,7 @@ export async function addOrder(orderData) {
     const res = await db.collection('orders').add({
       data: {
         ...orderData,
+        roomId: roomId || '',
         rushLastTime: null,
         rushCount: 0,
         cloudCreatedAt: new Date(),
@@ -514,7 +758,7 @@ export async function addOrder(orderData) {
  * 从云端获取所有订单
  * @returns {Promise<Array>}
  */
-export async function fetchOrders() {
+export async function fetchOrders(roomId) {
   if (!isCloudAvailable() || !cloudInited) {
     console.log('[Cloud] 非云环境，使用本地订单')
     return null
@@ -525,7 +769,8 @@ export async function fetchOrders() {
 
   try {
     const db = getDB()
-    const countRes = await db.collection('orders').count()
+    const query = roomId ? { roomId } : {}
+    const countRes = await db.collection('orders').where(query).count()
     const total = countRes.total
     if (total === 0) return []
 
@@ -534,6 +779,7 @@ export async function fetchOrders() {
     for (let i = 0; i < batchTimes; i++) {
       tasks.push(
         db.collection('orders')
+          .where(query)
           .orderBy('createdAt', 'desc')
           .skip(i * 20)
           .limit(20)
@@ -555,6 +801,8 @@ export async function fetchOrders() {
 
 /**
  * 更新云端订单状态
+ * 优先使用云函数（绕过安全规则，允许主厨更新客户创建的订单）
+ * 云函数不可用时回退到客户端 SDK 直接更新
  * @param {string} cloudId 云端文档 _id
  * @param {Object} updateFields 要更新的字段
  * @returns {Promise<boolean>}
@@ -564,18 +812,40 @@ export async function updateOrderInCloud(cloudId, updateFields) {
     return false
   }
 
+  // 方式1：优先使用云函数更新（不受安全规则限制）
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateOrder',
+      data: { cloudId, updateFields },
+    })
+    if (res.result && res.result.success) {
+      console.log('[Cloud] 云函数更新订单成功, _id:', cloudId, '字段:', Object.keys(updateFields))
+      return true
+    }
+    console.warn('[Cloud] 云函数返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数调用失败，尝试直接更新:', e.message || e)
+  }
+
+  // 方式2：回退到客户端 SDK 直接更新（受安全规则限制，仅创建者可写时会失败）
   try {
     const db = getDB()
-    await db.collection('orders').doc(cloudId).update({
+    const res = await db.collection('orders').doc(cloudId).update({
       data: {
         ...updateFields,
         updatedAt: new Date(),
       },
     })
-    console.log('[Cloud] 订单状态已更新, _id:', cloudId)
-    return true
+    const updated = res.stats && res.stats.updated > 0
+    if (updated) {
+      console.log('[Cloud] 直接更新订单成功, _id:', cloudId)
+    } else {
+      console.warn('[Cloud] 直接更新订单: 0条记录被更新（可能是权限问题），_id:', cloudId)
+    }
+    return updated
   } catch (e) {
     console.error('[Cloud] 更新订单状态失败:', e)
+    console.error('[Cloud] 请确保: 1) updateOrder 云函数已部署  2) 或者 orders 集合权限设为"所有用户可读写"')
     return false
   }
 }
@@ -590,6 +860,31 @@ export async function rushOrderInCloud(cloudId) {
     return false
   }
 
+  const rushFields = {
+    rushLastTime: new Date().toISOString(),
+    updatedAt: new Date(),
+  }
+
+  // 方式1：优先使用云函数更新（可以使用 inc 操作符）
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateOrder',
+      data: {
+        cloudId,
+        updateFields: rushFields,
+        incrementRushCount: true,
+      },
+    })
+    if (res.result && res.result.success) {
+      console.log('[Cloud] 云函数催单成功, _id:', cloudId)
+      return true
+    }
+    console.warn('[Cloud] 云函数催单返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数催单失败，尝试直接更新:', e.message || e)
+  }
+
+  // 方式2：回退到客户端 SDK
   try {
     const db = getDB()
     const _ = db.command

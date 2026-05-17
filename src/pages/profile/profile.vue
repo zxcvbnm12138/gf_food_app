@@ -35,6 +35,17 @@
       </view>
     </view>
 
+    <!-- 房间信息卡片 -->
+    <view v-if="roomId" class="room-info-bar">
+      <view class="room-info-left">
+        <text class="room-info-label">🏠 房间号</text>
+        <text class="room-info-code">{{ roomId }}</text>
+      </view>
+      <view class="room-copy-btn" @click="copyRoomId">
+        <text class="room-copy-btn-text">📋 复制</text>
+      </view>
+    </view>
+
     <!-- 主体内容 -->
     <scroll-view class="profile-body" scroll-y :enhanced="true" :show-scrollbar="false">
       <view class="body-inner">
@@ -116,8 +127,14 @@
             <view class="setting-chevron"></view>
           </view>
           <view class="setting-divider"></view>
-          <view class="setting-row" @click="doLogout">
+          <view class="setting-row" @click="exitRoom">
             <text class="setting-icon">🚪</text>
+            <text class="setting-label">退出房间</text>
+            <view class="setting-chevron"></view>
+          </view>
+          <view class="setting-divider"></view>
+          <view class="setting-row" @click="doLogout">
+            <text class="setting-icon">🚨</text>
             <text class="setting-label">退出登录</text>
             <view class="setting-chevron"></view>
           </view>
@@ -151,11 +168,13 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import store, { clearOrders, updateUserAvatar, setRole, clearRole, clearLoginState } from '@/store/index.js'
+import store, { clearOrders, updateUserAvatar, setRole, clearRole, clearLoginState, clearRoomId } from '@/store/index.js'
+import { leaveRoom, checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
 const user = computed(() => store.user)
 const coupons = computed(() => store.coupons)
+const roomId = computed(() => store.roomId)
 const notifyOn = ref(true)
 
 const showRedeem = ref(false)
@@ -253,9 +272,37 @@ const switchToChef = () => {
   uni.switchTab({ url: '/pages/chef/dashboard' })
 }
 
+const copyRoomId = () => {
+  if (!store.roomId) return
+  uni.setClipboardData({
+    data: store.roomId,
+    success: () => {
+      uni.showToast({ title: '已复制房间号 📋', icon: 'none' })
+    },
+  })
+}
+
+const exitRoom = () => {
+  uni.showModal({
+    title: '确认退出房间',
+    content: '退出后将无法查看该房间的菜单和订单，确定退出吗？',
+    confirmColor: '#FF4D4F',
+    success: async (res) => {
+      if (res.confirm) {
+        const loginData = checkLogin()
+        const openid = loginData?.openid || ''
+        await leaveRoom(store.roomId, openid)
+        clearRoomId()
+        uni.reLaunch({ url: '/pages/login/login' })
+      }
+    },
+  })
+}
+
 const doLogout = () => {
   clearLoginState()
   clearRole()
+  clearRoomId()
   uni.reLaunch({ url: '/pages/login/login' })
 }
 </script>
@@ -285,6 +332,15 @@ const doLogout = () => {
   align-items: center;
   gap: 24rpx;
 }
+
+/* 房间信息栏 */
+.room-info-bar { display: flex; align-items: center; justify-content: space-between; margin: 0 32rpx; padding: 24rpx 28rpx; background: #FFFFFF; border-radius: 24rpx; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.06); margin-top: -28rpx; z-index: 1; position: relative; }
+.room-info-left { display: flex; align-items: center; gap: 16rpx; }
+.room-info-label { font-size: 24rpx; color: #86909C; }
+.room-info-code { font-size: 32rpx; font-weight: bold; color: #FF4D4F; letter-spacing: 6rpx; font-family: 'Courier New', monospace; }
+.room-copy-btn { padding: 12rpx 24rpx; background: #FFF1F0; border-radius: 20rpx; transition: transform 0.2s ease; }
+.room-copy-btn:active { transform: scale(0.92); }
+.room-copy-btn-text { font-size: 22rpx; color: #FF4D4F; font-weight: bold; }
 
 .avatar-area {
   position: relative;
