@@ -103,6 +103,18 @@ function isCloudFunctionNotFound(error) {
     message.includes('FunctionName parameter could not be found')
 }
 
+function isCloudAccessDeniedResult(result) {
+  if (!result || result.success !== false) return false
+  const message = String(result.message || '')
+  return message.includes('没有当前房间') ||
+    message.includes('无法获取用户身份') ||
+    message.includes('房间不存在') ||
+    message.includes('不属于当前房间') ||
+    message.includes('缺少房间归属') ||
+    message.includes('操作权限') ||
+    message.includes('访问权限')
+}
+
 function isCollectionMissingError(error) {
   const errCode = error?.errCode || error?.code
   const message = String(error?.message || error || '').toLowerCase()
@@ -957,6 +969,7 @@ export async function fetchMenuCategories(roomId) {
     if (res.result && res.result.success && Array.isArray(res.result.categories)) {
       return normalizeCategories(res.result.categories)
     }
+    if (isCloudAccessDeniedResult(res.result)) return []
     console.warn('[Cloud] 云函数获取分类返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数获取分类失败，尝试直接查询:', e.message || e)
@@ -1024,6 +1037,7 @@ export async function addMenuCategory(categoryData, roomId) {
     if (res.result && res.result.success && res.result.category) {
       return normalizeCategory(res.result.category)
     }
+    if (isCloudAccessDeniedResult(res.result)) return null
     console.warn('[Cloud] 云函数新增分类返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数新增分类失败，尝试直接新增:', e.message || e)
@@ -1070,6 +1084,7 @@ export async function deleteMenuCategory(categoryId, roomId, fallbackCategoryId 
       console.log('[Cloud] 云函数删除分类成功:', categoryId)
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数删除分类返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数删除分类失败，尝试直接删除:', e.message || e)
@@ -1173,6 +1188,7 @@ export async function fetchCustomCoupons(roomId) {
     if (res.result && res.result.success && Array.isArray(res.result.coupons)) {
       return normalizeCoupons(res.result.coupons)
     }
+    if (isCloudAccessDeniedResult(res.result)) return []
     console.warn('[Cloud] 云函数获取特权返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数获取特权失败，尝试直接查询:', e.message || e)
@@ -1231,6 +1247,7 @@ export async function addCustomCoupon(couponData, roomId) {
     if (res.result && res.result.success && res.result.coupon) {
       return normalizeCoupon(res.result.coupon)
     }
+    if (isCloudAccessDeniedResult(res.result)) return null
     console.warn('[Cloud] 云函数新增特权返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数新增特权失败，尝试直接新增:', e.message || e)
@@ -1401,6 +1418,7 @@ export async function fetchMenuItems(roomId) {
         console.log('[Cloud] 云函数获取菜品成功，共', res.result.items.length, '道, roomId:', roomId)
         return res.result.items
       }
+      if (isCloudAccessDeniedResult(res.result)) return []
       console.warn('[Cloud] 云函数获取菜品返回失败:', res.result?.message)
     } catch (e) {
       console.warn('[Cloud] 云函数 getMenuItems 调用失败，尝试直接查询:', e.message || e)
@@ -1483,6 +1501,7 @@ export async function addMenuItem(data, roomId) {
       console.log('[Cloud] 云函数新增菜品成功, _id:', res.result._id)
       return res.result._id
     }
+    if (isCloudAccessDeniedResult(res.result)) return null
     console.warn('[Cloud] 云函数新增菜品返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数新增菜品失败，尝试直接新增:', e.message || e)
@@ -1528,7 +1547,7 @@ export async function updateMenuItem(id, data, roomId) {
     return false
   }
 
-  // 优先使用云函数，绕过“仅创建者可写”等集合权限导致的跨端更新失败。
+  // 优先使用带服务端权限校验的云函数，避免依赖宽松的集合写入规则。
   try {
     const res = await wx.cloud.callFunction({
       name: 'updateMenuItem',
@@ -1543,6 +1562,7 @@ export async function updateMenuItem(id, data, roomId) {
       console.log('[Cloud] 云函数更新菜品成功, _id:', id)
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数更新菜品返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数 updateMenuItem 调用失败，尝试直接更新:', e.message || e)
@@ -1565,7 +1585,7 @@ export async function updateMenuItem(id, data, roomId) {
     return true
   } catch (e) {
     console.error('[Cloud] 更新菜品失败:', e)
-    console.error('[Cloud] 请确保: 1) updateMenuItem 云函数已部署  2) 或者 menu_items 集合允许主厨写入')
+    console.error('[Cloud] 请确保 updateMenuItem 云函数已部署，并为 menu_items 配置最小必要写入权限')
     return false
   }
 }
@@ -1596,6 +1616,7 @@ export async function deleteMenuItem(id, roomId) {
       console.log('[Cloud] 云函数删除菜品成功, _id:', id)
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数删除菜品返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数删除菜品失败，尝试直接删除:', e.message || e)
@@ -1686,6 +1707,7 @@ export async function deleteMenuItemsByRoom(roomId) {
       console.log('[Cloud] 云函数清空房间菜品成功, roomId:', roomId, 'removed:', res.result.removed)
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数清空房间菜品返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数清空房间菜品失败，尝试直接删除:', e.message || e)
@@ -1917,6 +1939,7 @@ export async function deleteOrdersByRoom(roomId) {
       console.log('[Cloud] 云函数清空房间订单成功, roomId:', roomId, 'removed:', res.result.removed)
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数清空房间订单返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数清空房间订单失败，尝试直接删除:', e.message || e)
@@ -1927,7 +1950,7 @@ export async function deleteOrdersByRoom(roomId) {
 
 /**
  * 更新云端订单状态
- * 优先使用云函数（绕过安全规则，允许主厨更新客户创建的订单）
+ * 优先使用带服务端权限校验的云函数更新订单
  * 云函数不可用时回退到客户端 SDK 直接更新
  * @param {string} cloudId 云端文档 _id
  * @param {Object} updateFields 要更新的字段
@@ -1938,7 +1961,7 @@ export async function updateOrderInCloud(cloudId, updateFields) {
     return false
   }
 
-  // 方式1：优先使用云函数更新（不受安全规则限制）
+  // 方式1：优先使用云函数更新（服务端会校验房间成员）
   try {
     const res = await wx.cloud.callFunction({
       name: 'updateOrder',
@@ -1948,6 +1971,7 @@ export async function updateOrderInCloud(cloudId, updateFields) {
       console.log('[Cloud] 云函数更新订单成功, _id:', cloudId, '字段:', Object.keys(updateFields))
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数调用失败，尝试直接更新:', e.message || e)
@@ -1971,7 +1995,7 @@ export async function updateOrderInCloud(cloudId, updateFields) {
     return updated
   } catch (e) {
     console.error('[Cloud] 更新订单状态失败:', e)
-    console.error('[Cloud] 请确保: 1) updateOrder 云函数已部署  2) 或者 orders 集合权限设为"所有用户可读写"')
+    console.error('[Cloud] 请确保 updateOrder 云函数已部署，并为 orders 配置最小必要写入权限')
     return false
   }
 }
@@ -2005,6 +2029,7 @@ export async function rushOrderInCloud(cloudId) {
       console.log('[Cloud] 云函数催单成功, _id:', cloudId)
       return true
     }
+    if (isCloudAccessDeniedResult(res.result)) return false
     console.warn('[Cloud] 云函数催单返回失败:', res.result?.message)
   } catch (e) {
     console.warn('[Cloud] 云函数催单失败，尝试直接更新:', e.message || e)

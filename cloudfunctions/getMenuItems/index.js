@@ -21,6 +21,43 @@ function normalizeRoomId(roomId) {
   return roomId ? String(roomId).trim().toUpperCase() : ''
 }
 
+function getRoomIdQuery(roomId) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  const rawRoomId = roomId ? String(roomId).trim() : ''
+  const roomIds = Array.from(new Set([rawRoomId, normalizedRoomId].filter(Boolean)))
+  return roomIds.length > 1 ? { roomId: _.in(roomIds) } : { roomId: normalizedRoomId }
+}
+
+function isRoomMember(room, openid) {
+  if (!room || !openid) return false
+  const members = Array.isArray(room.members) ? room.members : []
+  return room.creatorOpenid === openid || members.includes(openid)
+}
+
+async function authorizeRoomMember(roomId, openid) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  if (!openid) {
+    return { success: false, message: '无法获取用户身份' }
+  }
+  if (!normalizedRoomId) {
+    return { success: false, message: '缺少 roomId' }
+  }
+
+  const roomRes = await db.collection('rooms')
+    .where(getRoomIdQuery(normalizedRoomId))
+    .limit(1)
+    .get()
+  const room = roomRes.data && roomRes.data[0]
+  if (!room) {
+    return { success: false, message: '房间不存在' }
+  }
+  if (!isRoomMember(room, openid)) {
+    return { success: false, message: '没有当前房间的访问权限' }
+  }
+
+  return { success: true, room }
+}
+
 function isCollectionMissing(error) {
   const errCode = error && (error.errCode || error.code)
   const message = String((error && error.message) || error || '').toLowerCase()
@@ -159,6 +196,7 @@ async function getCustomCoupons(roomId) {
 }
 
 exports.main = async (event, context) => {
+  const wxContext = cloud.getWXContext()
   const rawRoomId = event.roomId ? String(event.roomId).trim() : ''
   const roomId = normalizeRoomId(rawRoomId)
 
@@ -167,6 +205,11 @@ exports.main = async (event, context) => {
   }
 
   try {
+    const auth = await authorizeRoomMember(roomId, wxContext.OPENID)
+    if (!auth.success) {
+      return { ...auth, items: [], categories: [], coupons: [] }
+    }
+
     if (event.action === 'getCategories') {
       const categories = await getCategories(roomId)
       return { success: true, categories }

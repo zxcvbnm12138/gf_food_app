@@ -1,4 +1,4 @@
-// 云函数：管理菜品（绕过客户端安全规则，允许主厨更新房间菜单）
+// 云函数：管理菜品（服务端校验房间成员后更新房间菜单）
 const cloud = require('wx-server-sdk')
 
 cloud.init({
@@ -30,6 +30,110 @@ function buildCategoryId(name) {
 
 function buildCouponId() {
   return `coupon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+}
+
+function normalizeText(value, maxLength = 120) {
+  return String(value || '').trim().slice(0, maxLength)
+}
+
+function normalizeStringArray(value, maxItems = 20, maxLength = 80) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map(item => normalizeText(item, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
+function normalizeOptionGroups(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map(group => {
+      if (!group || typeof group !== 'object') return null
+      const label = normalizeText(group.label, 30)
+      const options = normalizeStringArray(group.options, 30, 60)
+      if (!label || options.length === 0) return null
+      return { label, options }
+    })
+    .filter(Boolean)
+    .slice(0, 6)
+}
+
+function sanitizeMenuItemFields(fields) {
+  if (!fields || typeof fields !== 'object') return {}
+  const data = {}
+
+  if ('name' in fields) data.name = normalizeText(fields.name, 80)
+  if ('desc' in fields) data.desc = normalizeText(fields.desc, 160)
+  if ('fullDesc' in fields) data.fullDesc = normalizeText(fields.fullDesc, 600)
+  if ('category' in fields) data.category = normalizeText(fields.category, 80)
+  if ('emoji' in fields) data.emoji = normalizeText(fields.emoji, 16)
+  if ('image' in fields) data.image = normalizeText(fields.image, 300)
+  if ('price' in fields) data.price = normalizeText(fields.price, 40)
+  if ('available' in fields) data.available = fields.available !== false
+  if ('sortOrder' in fields) data.sortOrder = Number(fields.sortOrder) || 1
+  if ('optionGroups' in fields) data.optionGroups = normalizeOptionGroups(fields.optionGroups)
+  if ('sweetLabel' in fields) data.sweetLabel = normalizeText(fields.sweetLabel, 30)
+  if ('sweetOptions' in fields) data.sweetOptions = normalizeStringArray(fields.sweetOptions, 30, 60)
+  if ('extraLabel' in fields) data.extraLabel = normalizeText(fields.extraLabel, 30)
+  if ('extraOptions' in fields) data.extraOptions = normalizeStringArray(fields.extraOptions, 30, 60)
+
+  return data
+}
+
+function sanitizeCategoryFields(fields) {
+  if (!fields || typeof fields !== 'object') return {}
+  const rawId = normalizeText(fields.id, 80)
+  return {
+    id: rawId.replace(/[^\w\u4e00-\u9fa5-]/g, '') || '',
+    name: normalizeText(fields.name, 40),
+    emoji: normalizeText(fields.emoji || '🍽️', 16) || '🍽️',
+    color: normalizeText(fields.color || '#E8F3FF', 32) || '#E8F3FF',
+    sortOrder: Number(fields.sortOrder) || Date.now(),
+  }
+}
+
+function sanitizeCouponFields(fields) {
+  if (!fields || typeof fields !== 'object') return {}
+  const rawId = normalizeText(fields.id, 80)
+  const required = Math.max(0, Number(fields.required) || 0)
+  return {
+    id: rawId.replace(/[^\w-]/g, '') || '',
+    name: normalizeText(fields.name, 40),
+    desc: normalizeText(fields.desc, 160),
+    emoji: normalizeText(fields.emoji || '🎁', 16) || '🎁',
+    color: normalizeText(fields.color || '#FFF1F0', 32) || '#FFF1F0',
+    required,
+  }
+}
+
+function isRoomMember(room, openid) {
+  if (!room || !openid) return false
+  const members = Array.isArray(room.members) ? room.members : []
+  return room.creatorOpenid === openid || members.includes(openid)
+}
+
+async function authorizeRoomMember(roomId, openid) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  if (!openid) {
+    return { success: false, message: '无法获取用户身份' }
+  }
+  if (!normalizedRoomId) {
+    return { success: false, message: '缺少 roomId' }
+  }
+
+  const roomRes = await db.collection('rooms')
+    .where(getRoomIdQuery(normalizedRoomId))
+    .limit(1)
+    .get()
+  const room = roomRes.data && roomRes.data[0]
+  if (!room) {
+    return { success: false, message: '房间不存在' }
+  }
+  if (!isRoomMember(room, openid)) {
+    return { success: false, message: '没有当前房间的操作权限' }
+  }
+
+  return { success: true, room }
 }
 
 function isCollectionMissing(error) {
@@ -138,27 +242,42 @@ async function touchRoomMenu(roomId) {
 
 exports.main = async (event, context) => {
   const { action = 'update', cloudId, updateFields } = event
+  const wxContext = cloud.getWXContext()
+  const openid = wxContext.OPENID
   const roomId = normalizeRoomId(event.roomId)
+  let cachedAuth = null
+
+  async function ensureRoomAuth(targetRoomId = roomId) {
+    const normalizedTargetRoomId = normalizeRoomId(targetRoomId)
+    if (cachedAuth && normalizeRoomId(cachedAuth.room && cachedAuth.room.roomId) === normalizedTargetRoomId) {
+      return cachedAuth
+    }
+    cachedAuth = await authorizeRoomMember(normalizedTargetRoomId, openid)
+    return cachedAuth
+  }
 
   if (action === 'addCoupon') {
-    if (!roomId || !updateFields || !String(updateFields.name || '').trim()) {
+    const couponFields = sanitizeCouponFields(updateFields)
+    if (!roomId || !couponFields.name) {
       return { success: false, message: '缺少参数' }
     }
 
-    const required = Math.max(0, Number(updateFields.required) || 0)
-    if (!required) {
+    if (!couponFields.required) {
       return { success: false, message: '缺少所需次数' }
     }
 
     try {
+      const auth = await ensureRoomAuth()
+      if (!auth.success) return auth
+
       const now = new Date()
       const coupon = {
-        id: updateFields.id || buildCouponId(),
-        name: String(updateFields.name).trim(),
-        desc: updateFields.desc || `累计投喂 ${required} 次即可兑换`,
-        emoji: String(updateFields.emoji || '🎁').trim() || '🎁',
-        color: updateFields.color || '#FFF1F0',
-        required,
+        id: couponFields.id || buildCouponId(),
+        name: couponFields.name,
+        desc: couponFields.desc || `累计投喂 ${couponFields.required} 次即可兑换`,
+        emoji: couponFields.emoji,
+        color: couponFields.color,
+        required: couponFields.required,
         custom: true,
         roomId,
         createdAt: now,
@@ -174,18 +293,22 @@ exports.main = async (event, context) => {
   }
 
   if (action === 'addCategory') {
-    if (!roomId || !updateFields || !String(updateFields.name || '').trim()) {
+    const categoryFields = sanitizeCategoryFields(updateFields)
+    if (!roomId || !categoryFields.name) {
       return { success: false, message: '缺少参数' }
     }
 
     try {
+      const auth = await ensureRoomAuth()
+      if (!auth.success) return auth
+
       const now = new Date()
       const category = {
-        id: updateFields.id || buildCategoryId(updateFields.name),
-        name: String(updateFields.name).trim(),
-        emoji: String(updateFields.emoji || '🍽️').trim() || '🍽️',
-        color: updateFields.color || '#E8F3FF',
-        sortOrder: Number(updateFields.sortOrder) || Date.now(),
+        id: categoryFields.id || buildCategoryId(categoryFields.name),
+        name: categoryFields.name,
+        emoji: categoryFields.emoji,
+        color: categoryFields.color,
+        sortOrder: categoryFields.sortOrder,
         roomId,
         createdAt: now,
         updatedAt: now,
@@ -211,6 +334,9 @@ exports.main = async (event, context) => {
     }
 
     try {
+      const auth = await ensureRoomAuth()
+      if (!auth.success) return auth
+
       const countRes = await db.collection('menu_categories').where({ roomId }).count()
       if ((Number(countRes.total) || 0) <= 1) {
         return { success: false, message: '至少保留一个分类' }
@@ -231,17 +357,21 @@ exports.main = async (event, context) => {
   }
 
   if (action === 'add') {
-    if (!roomId || !updateFields) {
+    const menuFields = sanitizeMenuItemFields(updateFields)
+    if (!roomId || !menuFields.name) {
       return { success: false, message: '缺少参数' }
     }
 
     try {
+      const auth = await ensureRoomAuth()
+      if (!auth.success) return auth
+
       const now = new Date()
       const res = await db.collection('menu_items').add({
         data: {
-          ...updateFields,
+          ...menuFields,
           roomId,
-          available: updateFields.available !== false,
+          available: menuFields.available !== false,
           createdAt: now,
           updatedAt: now,
         },
@@ -261,6 +391,9 @@ exports.main = async (event, context) => {
     }
 
     try {
+      const auth = await ensureRoomAuth()
+      if (!auth.success) return auth
+
       let removed = 0
       while (true) {
         const res = await db.collection('menu_items')
@@ -291,41 +424,49 @@ exports.main = async (event, context) => {
 
   try {
     if (action === 'delete') {
-      let targetRoomId = roomId
+      const current = await db.collection('menu_items').doc(cloudId).get()
+      const targetRoomId = normalizeRoomId((current.data && current.data.roomId) || roomId)
       if (!targetRoomId) {
-        const current = await db.collection('menu_items').doc(cloudId).get()
-        targetRoomId = current.data && current.data.roomId
+        return { success: false, message: '菜品缺少房间归属' }
       }
+      if (roomId && targetRoomId !== roomId) {
+        return { success: false, message: '菜品不属于当前房间' }
+      }
+      const auth = await ensureRoomAuth(targetRoomId)
+      if (!auth.success) return auth
+
       const res = await db.collection('menu_items').doc(cloudId).remove()
       await touchRoomMenu(targetRoomId)
       return { success: true, removed: res.stats.removed }
     }
 
-    if (!updateFields) {
+    const menuFields = sanitizeMenuItemFields(updateFields)
+    if (Object.keys(menuFields).length === 0) {
       return { success: false, message: '缺少参数' }
     }
 
-    if (roomId) {
-      const current = await db.collection('menu_items').doc(cloudId).get()
-      const currentRoomId = normalizeRoomId(current.data && current.data.roomId)
-      if (currentRoomId && currentRoomId !== roomId) {
-        return { success: false, message: '菜品不属于当前房间' }
-      }
+    const current = await db.collection('menu_items').doc(cloudId).get()
+    const currentRoomId = normalizeRoomId((current.data && current.data.roomId) || roomId)
+    if (!currentRoomId) {
+      return { success: false, message: '菜品缺少房间归属' }
     }
+    if (roomId && currentRoomId !== roomId) {
+      return { success: false, message: '菜品不属于当前房间' }
+    }
+    const auth = await ensureRoomAuth(currentRoomId)
+    if (!auth.success) return auth
 
     const nextFields = {
-      ...updateFields,
+      ...menuFields,
       updatedAt: new Date(),
-    }
-    if (roomId) {
-      nextFields.roomId = roomId
+      roomId: currentRoomId,
     }
 
     const res = await db.collection('menu_items').doc(cloudId).update({
       data: nextFields,
     })
 
-    await touchRoomMenu(roomId)
+    await touchRoomMenu(currentRoomId)
     return { success: true, updated: res.stats.updated }
   } catch (e) {
     console.error('管理菜品失败:', e)

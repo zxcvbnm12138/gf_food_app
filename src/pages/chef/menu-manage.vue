@@ -713,19 +713,19 @@ const chooseAndUploadImage = () => {
 .menu-card.swiped:active { transform: translateX(-148rpx); }
 .menu-img { width: 140rpx; height: 140rpx; border-radius: 20rpx; overflow: hidden; flex-shrink: 0; background: #FFF7E6; }
 .menu-photo { width: 100%; height: 100%; }
-.menu-info { flex: 1; display: flex; flex-direction: column; justify-content: space-between; min-height: 140rpx; }
-.menu-top-row { display: flex; justify-content: space-between; align-items: center; }
-.menu-name { font-size: 30rpx; font-weight: bold; color: #1D2129; }
-.avail-badge { padding: 6rpx 16rpx; border-radius: 16rpx; }
+.menu-info { flex: 1; min-width: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; min-height: 140rpx; }
+.menu-top-row { display: flex; justify-content: space-between; align-items: center; gap: 16rpx; min-width: 0; }
+.menu-name { flex: 1; min-width: 0; font-size: 30rpx; font-weight: bold; color: #1D2129; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avail-badge { flex-shrink: 0; padding: 6rpx 16rpx; border-radius: 16rpx; }
 .avail-badge.on { background: #F6FFED; }
 .avail-badge.off { background: #FFF1F0; }
 .avail-text { font-size: 20rpx; font-weight: bold; }
 .avail-badge.on .avail-text { color: #52C41A; }
 .avail-badge.off .avail-text { color: #FF4D4F; }
-.menu-desc { font-size: 24rpx; color: #86909C; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menu-bottom { display: flex; justify-content: space-between; align-items: center; }
-.menu-cat { font-size: 22rpx; color: #4E5969; }
-.switch-hit-area { padding: 8rpx 0 8rpx 24rpx; }
+.menu-desc { display: block; width: 100%; max-width: 100%; min-width: 0; font-size: 24rpx; color: #86909C; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-bottom { display: flex; justify-content: space-between; align-items: center; gap: 16rpx; min-width: 0; }
+.menu-cat { flex: 1; min-width: 0; font-size: 22rpx; color: #4E5969; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switch-hit-area { flex-shrink: 0; padding: 8rpx 0 8rpx 24rpx; }
 .menu-switch { transform: scale(0.75); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: 160rpx; gap: 20rpx; }
 .empty-emoji { font-size: 80rpx; }

@@ -131,7 +131,7 @@ import store, {
 import { checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
-const categories = computed(() => store.categories)
+const categories = computed(() => store.categories.slice(0, 5))
 const menuItems = computed(() => getAvailableItems())
 const user = computed(() => store.user)
 const roomId = computed(() => store.roomId)
