@@ -120,7 +120,8 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import store, { addToCart } from '@/store/index.js'
+import { onShow, onHide } from '@dcloudio/uni-app'
+import store, { addToCart, loadMenuFromCloud, startMenuRealtimeSync, stopMenuRealtimeSync } from '@/store/index.js'
 
 const itemId = ref('')
 const quantity = ref(1)
@@ -137,6 +138,7 @@ const pxToRpxRatio = ref(2)
 
 const HERO_MIN_HEIGHT = 500
 const HERO_MAX_HEIGHT = 750
+const MENU_REALTIME_OWNER = 'customer-detail'
 
 const item = computed(() => {
   // 支持云数据库 _id（字符串）和本地 id（数字）
@@ -179,6 +181,15 @@ onMounted(() => {
     if (opts.id) itemId.value = opts.id
   }
   // #endif
+})
+
+onShow(() => {
+  loadMenuFromCloud()
+  startMenuRealtimeSync(MENU_REALTIME_OWNER)
+})
+
+onHide(() => {
+  stopMenuRealtimeSync(MENU_REALTIME_OWNER)
 })
 
 const selectSweet = (index) => {

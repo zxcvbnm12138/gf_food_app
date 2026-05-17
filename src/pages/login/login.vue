@@ -296,7 +296,7 @@ const quickJoinExisting = async () => {
   const openid = loginData?.openid || ''
   const result = await joinRoom(existingRoomId.value, openid)
   if (result.success) {
-    currentRoomId.value = existingRoomId.value
+    currentRoomId.value = (result.roomInfo?.roomId || existingRoomId.value || '').trim().toUpperCase()
     setRoomId(currentRoomId.value)
     step.value = 2
   } else {

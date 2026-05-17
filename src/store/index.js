@@ -16,6 +16,14 @@ import {
   getStoredRoomId,
   setStoredRoomId,
   clearStoredRoomId,
+  resolveMenuImages,
+  uploadImageToCloud as cloudUploadImage,
+  resolveImageUrl,
+  migrateLocalImagesToCloud,
+  watchMenuItems as cloudWatchMenuItems,
+  watchRoomMenuVersion as cloudWatchRoomMenuVersion,
+  normalizeRoomId,
+  setLocalMenuItemAvailability,
 } from '@/services/cloud.js'
 
 const ORDERS_STORAGE_KEY = 'gf_food_orders'
@@ -26,6 +34,16 @@ const RUSH_STORAGE_KEY = 'gf_food_rush_times'
 
 // 正在进行云端操作的订单ID集合（操作锁）
 const pendingOperations = new Set()
+const CHEF_ORDERS_POLL_INTERVAL = 5000
+let menuRealtimeWatcher = null
+let menuRoomVersionWatcher = null
+let menuRealtimeRoomId = ''
+let menuRealtimeSeq = 0
+let isMenuMigrationRunning = false
+const menuRealtimeOwners = new Set()
+let chefOrdersPollTimer = null
+let chefOrdersPollInFlight = false
+const chefOrdersSyncOwners = new Set()
 
 // 状态优先级：只允许前进，不允许回退
 const STATUS_PRIORITY = { pending: 0, accepted: 1, cooking: 2, done: 3 }
@@ -176,7 +194,7 @@ const store = reactive({
 
   // 侧栏分类（菜单页用）
   sideCategories: [
-    { id: 'hot', name: '🔥 热销', active: true },
+    { id: 'hot', name: '全部菜品', active: true },
     { id: 'dessert', name: '🍰 甜点', active: false },
     { id: 'drink', name: '🥤 饮品', active: false },
     { id: 'carb', name: '🍜 面食', active: false },
@@ -249,6 +267,9 @@ const store = reactive({
 
   // 催单通知队列（主厨端用）
   rushNotifications: [],
+
+  // 当前正在展示的催单通知（主厨端所有页面共用）
+  activeRushNotification: null,
 })
 
 // ========== 登录管理 ==========
@@ -287,8 +308,12 @@ export function clearRole() {
 // ========== 房间管理 ==========
 
 export function setRoomId(roomId) {
-  store.roomId = roomId
-  setStoredRoomId(roomId)
+  const normalizedRoomId = normalizeRoomId(roomId)
+  if (store.roomId && store.roomId !== normalizedRoomId) {
+    stopAllMenuRealtimeSync()
+  }
+  store.roomId = normalizedRoomId
+  setStoredRoomId(normalizedRoomId)
 }
 
 export function getRoomId() {
@@ -296,6 +321,7 @@ export function getRoomId() {
 }
 
 export function clearRoomId() {
+  stopAllMenuRealtimeSync()
   store.roomId = ''
   store.roomInfo = null
   clearStoredRoomId()
@@ -307,19 +333,144 @@ export function setRoomInfo(info) {
 
 // ========== 菜品云端操作 ==========
 
+async function applyCloudMenuItems(items, source = 'fetch', shouldAssign = true) {
+  // 检查是否有本地图片路径需要迁移
+  const hasLocalImages = items.some(item => item.image && item.image.startsWith('/static/'))
+  if (hasLocalImages && isCloudAvailable() && !isMenuMigrationRunning) {
+    console.log('[Store] 检测到本地图片路径，开始自动迁移到云存储...')
+    isMenuMigrationRunning = true
+    migrateLocalImagesToCloud(store.roomId).then(result => {
+      if (result.migrated > 0) {
+        console.log(`[Store] 图片迁移完成: ${result.migrated} 张成功`)
+        // 迁移完成后重新加载
+        loadMenuFromCloud()
+      }
+    }).catch(e => {
+      console.warn('[Store] 图片迁移异常:', e)
+    }).finally(() => {
+      isMenuMigrationRunning = false
+    })
+  }
+
+  // 解析云端图片链接（cloud:// -> 临时访问 URL）
+  await resolveMenuImages(items)
+  if (shouldAssign) {
+    store.menuItems = items
+  }
+  store.menuLoaded = true
+  console.log('[Store] 菜品已加载，共', items.length, '道, roomId:', store.roomId, 'source:', source)
+  return items
+}
+
 /**
  * 从云端加载菜品到 store
  */
 export async function loadMenuFromCloud() {
   try {
     const items = await cloudFetchMenuItems(store.roomId)
-    store.menuItems = items
-    store.menuLoaded = true
-    console.log('[Store] 菜品已加载，共', items.length, '道, roomId:', store.roomId)
-    return items
+    return await applyCloudMenuItems(items, 'fetch')
   } catch (e) {
     console.error('[Store] 加载菜品失败:', e)
     return store.menuItems
+  }
+}
+
+/**
+ * 启动菜品实时同步。失败时返回 false，页面轮询会继续兜底。
+ */
+export function startMenuRealtimeSync(owner = 'default') {
+  if (!store.roomId || !isCloudAvailable()) return false
+  if (owner) {
+    menuRealtimeOwners.add(owner)
+  }
+
+  if (menuRealtimeWatcher && menuRealtimeRoomId === store.roomId) {
+    return true
+  }
+
+  closeMenuRealtimeWatchers()
+  menuRealtimeRoomId = store.roomId
+
+  menuRoomVersionWatcher = cloudWatchRoomMenuVersion(
+    store.roomId,
+    async () => {
+      const seq = ++menuRealtimeSeq
+      try {
+        const items = await cloudFetchMenuItems(store.roomId)
+        const appliedItems = await applyCloudMenuItems(items, 'room-watch', false)
+        if (seq === menuRealtimeSeq) {
+          store.menuItems = appliedItems
+        }
+      } catch (e) {
+        console.warn('[Store] 房间菜单版本同步失败:', e)
+      }
+    },
+    (error) => {
+      console.warn('[Store] 房间菜单版本监听失败，保留轮询兜底:', error)
+      closeRoomVersionWatcher()
+    }
+  )
+
+  menuRealtimeWatcher = cloudWatchMenuItems(
+    store.roomId,
+    async (items) => {
+      const seq = ++menuRealtimeSeq
+      try {
+        const appliedItems = await applyCloudMenuItems(items, 'watch', false)
+        if (seq === menuRealtimeSeq) {
+          store.menuItems = appliedItems
+        }
+      } catch (e) {
+        console.warn('[Store] 菜品实时同步处理失败:', e)
+      }
+    },
+    (error) => {
+      console.warn('[Store] 菜品集合监听失败，继续使用房间版本监听和轮询兜底:', error)
+      closeMenuItemsWatcher()
+    }
+  )
+
+  return !!menuRealtimeWatcher || !!menuRoomVersionWatcher
+}
+
+export function stopMenuRealtimeSync(owner = 'default') {
+  if (owner) {
+    menuRealtimeOwners.delete(owner)
+    if (menuRealtimeOwners.size > 0) return
+  }
+  closeMenuRealtimeWatchers()
+}
+
+export function stopAllMenuRealtimeSync() {
+  menuRealtimeOwners.clear()
+  closeMenuRealtimeWatchers()
+}
+
+function closeMenuRealtimeWatchers() {
+  closeRoomVersionWatcher()
+  closeMenuItemsWatcher()
+  menuRealtimeRoomId = ''
+}
+
+function closeMenuItemsWatcher() {
+  if (!menuRealtimeWatcher) return
+  try {
+    menuRealtimeWatcher.close()
+  } catch (e) {
+    console.warn('[Store] 关闭菜品实时监听失败:', e)
+  } finally {
+    menuRealtimeWatcher = null
+  }
+}
+
+function closeRoomVersionWatcher() {
+  if (!menuRoomVersionWatcher) return
+  try {
+    menuRoomVersionWatcher.close()
+  } catch (e) {
+    console.warn('[Store] 关闭房间菜单版本监听失败:', e)
+  } finally {
+    menuRoomVersionWatcher = null
   }
 }
 
@@ -335,17 +486,19 @@ export async function addMenuItemToCloud(data) {
   return id
 }
 
+export async function uploadMenuImageToCloud(filePath) {
+  const roomDir = store.roomId ? `menu-images/${store.roomId}` : 'menu-images/default'
+  return await cloudUploadImage(filePath, roomDir)
+}
+
 /**
  * 更新云端菜品
  */
 export async function updateMenuItemInCloud(id, data) {
-  const success = await cloudUpdateMenuItem(id, data)
+  const success = await cloudUpdateMenuItem(id, data, store.roomId)
   if (success) {
-    // 同步更新本地 store
-    const item = store.menuItems.find(m => m._id === id)
-    if (item) {
-      Object.assign(item, data)
-    }
+    // 更新后立即以云端为准刷新一次，点餐端则由 watch/轮询同步。
+    await loadMenuFromCloud()
   }
   return success
 }
@@ -354,7 +507,7 @@ export async function updateMenuItemInCloud(id, data) {
  * 删除云端菜品
  */
 export async function deleteMenuItemFromCloud(id) {
-  const success = await cloudDeleteMenuItem(id)
+  const success = await cloudDeleteMenuItem(id, store.roomId)
   if (success) {
     const idx = store.menuItems.findIndex(m => m._id === id)
     if (idx !== -1) {
@@ -371,18 +524,58 @@ export async function toggleItemAvailability(itemId) {
   const item = store.menuItems.find(m => (m._id || m.id) === itemId)
   if (!item) return null
 
-  const newAvail = !item.available
+  const newAvail = !(item.available !== false)
   item.available = newAvail // 先乐观更新
+  const itemKey = item._id || item.id || itemId
+  const isLocalDefaultItem = String(itemKey).startsWith('local_')
+
+  if (isLocalDefaultItem) {
+    setLocalMenuItemAvailability(itemKey, newAvail)
+    return newAvail
+  }
 
   if (isCloudAvailable()) {
-    const success = await cloudToggleAvailability(item._id, newAvail)
+    const success = await cloudToggleAvailability(item._id, newAvail, store.roomId)
     if (!success) {
       // 回滚
       item.available = !newAvail
+      return null
     }
-    return success ? newAvail : null
+    await loadMenuFromCloud()
+    return newAvail
   }
   return newAvail
+}
+
+async function syncChefOrdersFromCloud() {
+  if (chefOrdersPollInFlight || store.currentRole !== 'chef' || !store.roomId) return
+  chefOrdersPollInFlight = true
+  try {
+    await loadOrdersFromCloud()
+  } finally {
+    chefOrdersPollInFlight = false
+  }
+}
+
+export function startChefOrdersSync(owner = 'default') {
+  if (owner) {
+    chefOrdersSyncOwners.add(owner)
+  }
+  syncChefOrdersFromCloud()
+  if (!chefOrdersPollTimer) {
+    chefOrdersPollTimer = setInterval(syncChefOrdersFromCloud, CHEF_ORDERS_POLL_INTERVAL)
+  }
+}
+
+export function stopChefOrdersSync(owner = 'default') {
+  if (owner) {
+    chefOrdersSyncOwners.delete(owner)
+    if (chefOrdersSyncOwners.size > 0) return
+  }
+  if (chefOrdersPollTimer) {
+    clearInterval(chefOrdersPollTimer)
+    chefOrdersPollTimer = null
+  }
 }
 
 // ========== 订单云端操作 ==========
@@ -415,7 +608,7 @@ export async function loadOrdersFromCloud() {
             const newRushCount = co.rushCount || 0
             if (newRushCount > oldRushCount) {
               // 有新催单！推入通知队列
-              store.rushNotifications.push({
+              enqueueRushNotification({
                 orderId: localId,
                 orderShortId: localId.slice(-6),
                 rushCount: newRushCount,
@@ -461,17 +654,50 @@ export async function loadOrdersFromCloud() {
   }
 }
 
+function promoteNextRushNotification() {
+  if (!store.activeRushNotification) {
+    store.activeRushNotification = store.rushNotifications.shift() || null
+  }
+}
+
+function hasRushNotification(notification) {
+  const sameNotification = (item) => (
+    item &&
+    item.orderId === notification.orderId &&
+    item.rushCount === notification.rushCount
+  )
+  return sameNotification(store.activeRushNotification) || store.rushNotifications.some(sameNotification)
+}
+
+export function enqueueRushNotification(notification) {
+  if (!notification || hasRushNotification(notification)) return
+  if (store.activeRushNotification) {
+    store.rushNotifications.push(notification)
+  } else {
+    store.activeRushNotification = notification
+  }
+}
+
 /**
- * 消费（弹出）一个催单通知
+ * 兼容旧页面的消费方法。新页面应读取 activeRushNotification，避免隐藏页面抢占通知。
  */
 export function popRushNotification() {
-  return store.rushNotifications.shift() || null
+  const notification = store.activeRushNotification || store.rushNotifications.shift() || null
+  store.activeRushNotification = null
+  promoteNextRushNotification()
+  return notification
+}
+
+export function dismissRushNotification() {
+  store.activeRushNotification = null
+  setTimeout(promoteNextRushNotification, 300)
 }
 
 /**
  * 清空所有催单通知
  */
 export function clearRushNotifications() {
+  store.activeRushNotification = null
   store.rushNotifications.splice(0, store.rushNotifications.length)
 }
 
@@ -755,5 +981,8 @@ export function getTodayOrders() {
     return dStr === todayStr
   })
 }
+
+// 云端图片操作（供页面调用）
+export { uploadMenuImageToCloud as uploadImageToCloud, resolveImageUrl }
 
 export default store

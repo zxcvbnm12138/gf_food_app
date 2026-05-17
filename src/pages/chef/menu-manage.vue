@@ -30,7 +30,9 @@
             <text class="menu-desc">{{ item.desc }}</text>
             <view class="menu-bottom">
               <text class="menu-cat">{{ getCatName(item.category) }}</text>
-              <switch class="menu-switch" :checked="item.available !== false" @change="toggleAvail(item)" color="#4080FF" />
+              <view class="switch-hit-area" @click.stop @tap.stop>
+                <switch class="menu-switch" :checked="item.available !== false" @change="toggleAvail(item, $event)" color="#4080FF" />
+              </view>
             </view>
           </view>
         </view>
@@ -54,7 +56,7 @@
 
         <!-- 菜品头部（编辑模式） -->
         <view v-if="!isNewItem" class="edit-item-head">
-          <image class="edit-photo" :src="editForm.image" mode="aspectFill" />
+          <image class="edit-photo" :src="editForm.imagePreview || editForm.image" mode="aspectFill" />
           <view class="edit-head-info">
             <text class="edit-name">{{ editForm.name }}</text>
             <text class="edit-cat">{{ getCatName(editForm.category) }}</text>
@@ -87,10 +89,23 @@
             <input class="edit-input" v-model="editForm.emoji" placeholder="输入一个emoji，如 🍓" maxlength="4" />
           </view>
 
-          <!-- 图片路径 -->
+          <!-- 图片上传 -->
           <view class="edit-field">
-            <text class="edit-label">图片路径</text>
-            <input class="edit-input" v-model="editForm.image" placeholder="/static/food1.jpg" />
+            <text class="edit-label">菜品图片</text>
+            <view class="image-upload-area" @click="chooseAndUploadImage">
+              <image v-if="editForm.imagePreview || editForm.image" class="upload-preview" :src="editForm.imagePreview || editForm.image" mode="aspectFill" />
+              <view v-else class="upload-placeholder">
+                <text class="upload-icon">📷</text>
+                <text class="upload-hint">点击上传图片</text>
+              </view>
+              <view class="upload-overlay" v-if="isUploading">
+                <view class="upload-spinner"></view>
+                <text class="upload-progress-text">上传中...</text>
+              </view>
+              <view class="upload-change-btn" v-if="editForm.image && !isUploading">
+                <text class="upload-change-text">更换图片</text>
+              </view>
+            </view>
           </view>
 
           <!-- 菜品描述 -->
@@ -114,13 +129,13 @@
           <!-- 甜度选项 -->
           <view class="edit-field">
             <text class="edit-label">甜度选项（逗号分隔）</text>
-            <input class="edit-input" v-model="editForm.sweetOptionsStr" placeholder="少少糖,正常甜,多多甜" />
+            <input class="edit-input" v-model="editForm.sweetOptionsStr" placeholder="少少糖,正常甜，也可用中文逗号" />
           </view>
 
           <!-- 加料选项 -->
           <view class="edit-field">
             <text class="edit-label">加料选项（逗号分隔）</text>
-            <input class="edit-input" v-model="editForm.extraOptionsStr" placeholder="多放草莓,加奶油" />
+            <input class="edit-input" v-model="editForm.extraOptionsStr" placeholder="多放草莓,加奶油，也可用中文逗号" />
           </view>
 
           <!-- 排序 -->
@@ -157,7 +172,9 @@ import store, {
   updateMenuItemInCloud,
   deleteMenuItemFromCloud,
   toggleItemAvailability,
+  uploadImageToCloud,
 } from '@/store/index.js'
+import { isCloudAvailable } from '@/services/cloud.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 
 const searchText = ref('')
@@ -165,6 +182,7 @@ const showEdit = ref(false)
 const isNewItem = ref(false)
 const isSaving = ref(false)
 const isLoading = ref(false)
+const isUploading = ref(false)
 
 const editForm = ref({
   _id: '',
@@ -173,7 +191,9 @@ const editForm = ref({
   fullDesc: '',
   category: 'hot',
   emoji: '🍽️',
-  image: '/static/food1.jpg',
+  image: '',
+  imagePreview: '',
+  available: true,
   price: '免费',
   sweetOptionsStr: '',
   extraOptionsStr: '',
@@ -199,6 +219,11 @@ const catOptions = [
 
 const catMap = { hot: '🔥 热销', dessert: '🍰 甜点', drink: '🥤 饮品', carb: '🍜 面食', light: '🥗 轻食', warm: '🍵 暖饮' }
 const getCatName = (cat) => catMap[cat] || cat
+const parseOptionList = (value) => (
+  value
+    ? value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+    : []
+)
 
 // 加载菜品
 onMounted(async () => {
@@ -210,9 +235,15 @@ onMounted(async () => {
 })
 
 // 切换上下架
-const toggleAvail = async (item) => {
+const toggleAvail = async (item, event) => {
+  event?.stopPropagation?.()
   const id = item._id || item.id
-  await toggleItemAvailability(id)
+  const result = await toggleItemAvailability(id)
+  if (result === null) {
+    uni.showToast({ title: '上下架失败，请检查云函数或网络', icon: 'none' })
+    return
+  }
+  uni.showToast({ title: result ? '已上架' : '已下架', icon: 'none' })
 }
 
 // 打开新增
@@ -225,7 +256,9 @@ const openAdd = () => {
     fullDesc: '',
     category: 'hot',
     emoji: '🍽️',
-    image: '/static/food1.jpg',
+    image: '',
+    imagePreview: '',
+    available: true,
     price: '免费',
     sweetOptionsStr: '',
     extraOptionsStr: '',
@@ -244,7 +277,9 @@ const openEdit = (item) => {
     fullDesc: item.fullDesc || '',
     category: item.category,
     emoji: item.emoji || '',
-    image: item.image || '',
+    image: item._cloudImageId || item.image || '',
+    imagePreview: item.image || item._cloudImageId || '',
+    available: item.available !== false,
     price: item.price || '免费',
     sweetOptionsStr: (item.sweetOptions || []).join(','),
     extraOptionsStr: (item.extraOptions || []).join(','),
@@ -256,10 +291,18 @@ const openEdit = (item) => {
 // 保存（新增 or 更新）
 const saveEdit = async () => {
   if (isSaving.value) return
+  if (isUploading.value) {
+    uni.showToast({ title: '图片上传中，请稍后保存', icon: 'none' })
+    return
+  }
   const form = editForm.value
 
   if (!form.name.trim()) {
     uni.showToast({ title: '请输入菜品名称', icon: 'none' })
+    return
+  }
+  if (!store.roomId) {
+    uni.showToast({ title: '请先创建或加入房间', icon: 'none' })
     return
   }
 
@@ -271,36 +314,45 @@ const saveEdit = async () => {
     emoji: form.emoji,
     image: form.image,
     price: form.price || '免费',
-    available: true,
-    sweetOptions: form.sweetOptionsStr ? form.sweetOptionsStr.split(',').map(s => s.trim()).filter(Boolean) : [],
-    extraOptions: form.extraOptionsStr ? form.extraOptionsStr.split(',').map(s => s.trim()).filter(Boolean) : [],
+    available: isNewItem.value ? true : form.available !== false,
+    sweetOptions: parseOptionList(form.sweetOptionsStr),
+    extraOptions: parseOptionList(form.extraOptionsStr),
     sortOrder: parseInt(form.sortOrder) || 1,
   }
 
   isSaving.value = true
 
   try {
+    let shouldClose = false
     if (isNewItem.value) {
       const id = await addMenuItemToCloud(data)
       if (id) {
         uni.showToast({ title: '添加成功 ✨', icon: 'none' })
-      } else {
+        shouldClose = true
+      } else if (!isCloudAvailable()) {
         // H5 降级：本地添加
         store.menuItems.push({ ...data, _id: 'local_' + Date.now() })
         uni.showToast({ title: '已添加（本地）✅', icon: 'none' })
+        shouldClose = true
+      } else {
+        uni.showToast({ title: '云端添加失败，请检查云函数', icon: 'none' })
       }
     } else {
       const success = await updateMenuItemInCloud(form._id, data)
       if (success) {
         uni.showToast({ title: '保存成功 ✅', icon: 'none' })
-      } else {
+        shouldClose = true
+      } else if (!isCloudAvailable()) {
         // H5 降级：本地更新
         const item = store.menuItems.find(m => (m._id || m.id) === form._id)
         if (item) Object.assign(item, data)
         uni.showToast({ title: '已保存（本地）✅', icon: 'none' })
+        shouldClose = true
+      } else {
+        uni.showToast({ title: '云端保存失败，请检查云函数', icon: 'none' })
       }
     }
-    showEdit.value = false
+    if (shouldClose) showEdit.value = false
   } catch (e) {
     uni.showToast({ title: '操作失败，请重试', icon: 'none' })
   } finally {
@@ -339,6 +391,51 @@ const confirmDelete = () => {
 }
 
 const onScrollBottom = () => { /* future: pagination */ }
+
+// 选择图片并上传到云端
+const chooseAndUploadImage = () => {
+  if (isUploading.value) return
+
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: async (res) => {
+      const tempPath = res.tempFilePaths[0]
+      if (!tempPath) return
+
+      // 先显示本地预览
+      const previousImage = editForm.value.image
+      const previousPreview = editForm.value.imagePreview
+      editForm.value.imagePreview = tempPath
+      isUploading.value = true
+
+      try {
+        const fileID = await uploadImageToCloud(tempPath)
+        if (fileID) {
+          editForm.value.image = fileID
+          editForm.value.imagePreview = tempPath
+          // 在小程序中 fileID 可以直接用于 image 组件显示
+          uni.showToast({ title: '图片上传成功 ✅', icon: 'none' })
+        } else {
+          editForm.value.image = previousImage
+          editForm.value.imagePreview = previousPreview
+          uni.showToast({ title: '上传失败，请重试', icon: 'none' })
+        }
+      } catch (e) {
+        console.error('[MenuManage] 图片上传异常:', e)
+        editForm.value.image = previousImage
+        editForm.value.imagePreview = previousPreview
+        uni.showToast({ title: '上传失败', icon: 'none' })
+      } finally {
+        isUploading.value = false
+      }
+    },
+    fail: () => {
+      // 用户取消选择，不处理
+    },
+  })
+}
 </script>
 
 <style scoped>
@@ -375,6 +472,7 @@ const onScrollBottom = () => { /* future: pagination */ }
 .menu-desc { font-size: 24rpx; color: #86909C; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-bottom { display: flex; justify-content: space-between; align-items: center; }
 .menu-cat { font-size: 22rpx; color: #4E5969; }
+.switch-hit-area { padding: 8rpx 0 8rpx 24rpx; }
 .menu-switch { transform: scale(0.75); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: 160rpx; gap: 20rpx; }
 .empty-emoji { font-size: 80rpx; }
@@ -434,4 +532,85 @@ const onScrollBottom = () => { /* future: pagination */ }
 .edit-btn-text.cancel { color: #4E5969; font-weight: bold; font-size: 28rpx; }
 .edit-btn-text.save { color: #FFFFFF; font-weight: bold; font-size: 28rpx; }
 .edit-btn-text.delete { color: #FF4D4F; font-weight: bold; font-size: 28rpx; }
+
+/* 图片上传区域 */
+.image-upload-area {
+  position: relative;
+  width: 100%;
+  height: 280rpx;
+  border-radius: 20rpx;
+  overflow: hidden;
+  background: #F7F8FA;
+  border: 2rpx dashed #C9CDD4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+.image-upload-area:active {
+  transform: scale(0.98);
+  border-color: #4080FF;
+}
+.upload-preview {
+  width: 100%;
+  height: 100%;
+}
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+}
+.upload-icon {
+  font-size: 60rpx;
+}
+.upload-hint {
+  font-size: 24rpx;
+  color: #86909C;
+}
+.upload-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+}
+.upload-spinner {
+  width: 40rpx;
+  height: 40rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.3);
+  border-top-color: #FFFFFF;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.upload-progress-text {
+  font-size: 24rpx;
+  color: #FFFFFF;
+  font-weight: bold;
+}
+.upload-change-btn {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56rpx;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.upload-change-text {
+  font-size: 22rpx;
+  color: #FFFFFF;
+  font-weight: bold;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 </style>

@@ -34,6 +34,7 @@
           @click="selectCategory(index)"
         >
           <text class="side-cat-text" :class="{ active: activeCatIndex === index }">{{ cat.name }}</text>
+          <text class="side-cat-count" :class="{ active: activeCatIndex === index }">{{ cat.count }}道</text>
         </view>
       </scroll-view>
 
@@ -95,30 +96,63 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import store, { addToCart, getCartTotal, loadMenuFromCloud, getAvailableItems } from '@/store/index.js'
+import { ref, computed } from 'vue'
+import { onShow, onHide } from '@dcloudio/uni-app'
+import store, {
+  addToCart,
+  getCartTotal,
+  loadMenuFromCloud,
+  getAvailableItems,
+  startMenuRealtimeSync,
+  stopMenuRealtimeSync,
+} from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const searchActive = ref(false)
 const searchText = ref('')
 const activeCatIndex = ref(0)
 const showAddToast = ref(false)
+const MENU_REALTIME_OWNER = 'customer-menu'
 
-const sideCategories = computed(() => store.sideCategories)
 // 只显示上架的菜品
 const menuItems = computed(() => getAvailableItems())
+const sideCategories = computed(() => store.sideCategories.map(cat => ({
+  ...cat,
+  count: cat.id === 'hot'
+    ? menuItems.value.length
+    : menuItems.value.filter(item => item.category === cat.id).length,
+})))
 
 const cartTotal = computed(() => getCartTotal())
 
-// 加载菜品
-onMounted(async () => {
-  if (!store.menuLoaded) {
-    await loadMenuFromCloud()
+// 菜品轮询刷新
+let menuPollTimer = null
+const MENU_POLL_INTERVAL = 5000 // 实时监听失败时，5秒轮询兜底
+
+const refreshMenu = async () => {
+  await loadMenuFromCloud()
+}
+
+// onShow: 每次页面可见时立即刷新 + 启动轮询
+onShow(() => {
+  refreshMenu()
+  startMenuRealtimeSync(MENU_REALTIME_OWNER)
+  if (!menuPollTimer) {
+    menuPollTimer = setInterval(refreshMenu, MENU_POLL_INTERVAL)
+  }
+})
+
+// onHide: 页面不可见时停止轮询
+onHide(() => {
+  stopMenuRealtimeSync(MENU_REALTIME_OWNER)
+  if (menuPollTimer) {
+    clearInterval(menuPollTimer)
+    menuPollTimer = null
   }
 })
 
 const categoryMap = {
-  0: null,  // 热销 = 全部
+  0: null,  // 全部菜品
   1: 'dessert',
   2: 'drink',
   3: 'carb',
@@ -127,8 +161,8 @@ const categoryMap = {
 }
 
 const currentCategoryTitle = computed(() => {
-  const titles = ['🔥 热销推荐', '🍰 甜点', '🥤 饮品', '🍜 面食', '🥗 轻食', '🍵 暖饮']
-  return titles[activeCatIndex.value] || '🔥 热销推荐'
+  const titles = ['全部菜品', '🍰 甜点', '🥤 饮品', '🍜 面食', '🥗 轻食', '🍵 暖饮']
+  return titles[activeCatIndex.value] || '全部菜品'
 })
 
 const filteredItems = computed(() => {
@@ -289,7 +323,10 @@ const goBack = () => {
 
 .side-cat {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6rpx;
   height: 104rpx;
   padding: 0 0 0 20rpx;
   transition: all 0.25s ease;
@@ -320,6 +357,18 @@ const goBack = () => {
 
 .side-cat-text.active {
   color: #1D2129;
+  font-weight: bold;
+}
+
+.side-cat-count {
+  font-size: 20rpx;
+  color: #86909C;
+  line-height: 1;
+  transition: all 0.25s ease;
+}
+
+.side-cat-count.active {
+  color: #FF4D4F;
   font-weight: bold;
 }
 
