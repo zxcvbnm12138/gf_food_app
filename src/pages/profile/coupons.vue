@@ -17,6 +17,19 @@
 
     <scroll-view class="coupon-scroll" scroll-y :enhanced="true" :show-scrollbar="false">
       <view class="coupon-list">
+        <view class="add-coupon-panel" @click="openAddCoupon">
+          <view class="add-coupon-icon">
+            <text class="add-coupon-icon-text">+</text>
+          </view>
+          <view class="add-coupon-copy">
+            <text class="add-coupon-title">新增特权兑换券</text>
+            <text class="add-coupon-desc">自定义图标、名称和投喂次数</text>
+          </view>
+          <view class="add-coupon-action">
+            <text class="add-coupon-action-text">添加</text>
+          </view>
+        </view>
+
         <view
           v-for="(coupon, index) in coupons"
           :key="coupon.id"
@@ -73,22 +86,70 @@
         </view>
       </view>
     </view>
+
+    <view class="redeem-overlay" v-if="showAddCoupon" @click="showAddCoupon = false">
+      <view class="add-coupon-card" @click.stop>
+        <text class="redeem-title">新增特权</text>
+        <view class="edit-field">
+          <text class="edit-label">特权图标</text>
+          <view class="emoji-picker">
+            <view
+              v-for="emoji in couponEmojiOptions"
+              :key="emoji"
+              class="emoji-chip"
+              :class="{ active: couponForm.emoji === emoji }"
+              @click="couponForm.emoji = emoji"
+            >
+              <text class="emoji-chip-text">{{ emoji }}</text>
+            </view>
+          </view>
+        </view>
+        <view class="edit-field">
+          <text class="edit-label">特权名称</text>
+          <input class="edit-input" v-model="couponForm.name" placeholder="比如 周末电影陪看券" maxlength="20" />
+        </view>
+        <view class="edit-field">
+          <text class="edit-label">所需投喂次数</text>
+          <input class="edit-input" v-model="couponForm.required" type="number" placeholder="20" />
+        </view>
+        <view class="redeem-actions">
+          <view class="redeem-btn cancel" @click="showAddCoupon = false">
+            <text class="redeem-btn-text cancel">取消</text>
+          </view>
+          <view class="redeem-btn confirm" @click="saveCoupon">
+            <text class="redeem-btn-text confirm">保存</text>
+          </view>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import store, { loadOrdersFromCloud, refreshUserStats } from '@/store/index.js'
+import store, { loadOrdersFromCloud, refreshUserStats, addCustomCoupon, loadCustomCouponsFromCloud } from '@/store/index.js'
 
 const user = computed(() => store.user)
 const coupons = computed(() => store.coupons)
 const availableCount = computed(() => coupons.value.filter(coupon => coupon.available).length)
 const showRedeem = ref(false)
+const showAddCoupon = ref(false)
 const redeemItem = ref({})
+const couponEmojiOptions = ['🎁', '💆‍♀️', '🛍️', '🎬', '🧋', '🎮', '📝', '🍰', '🌙', '💝', '🚗', '⭐']
+const couponForm = ref({
+  emoji: '🎁',
+  name: '',
+  required: '',
+})
 
 onShow(() => {
   refreshUserStats()
+  loadCustomCouponsFromCloud()
+    .then(() => refreshUserStats())
+    .catch((e) => {
+      console.warn('[Coupons] 刷新云端特权失败', e)
+    })
   loadOrdersFromCloud()
     .then(() => refreshUserStats())
     .catch((e) => {
@@ -129,6 +190,46 @@ const confirmRedeem = () => {
   })
 }
 
+const openAddCoupon = () => {
+  couponForm.value = {
+    emoji: '🎁',
+    name: '',
+    required: '',
+  }
+  showAddCoupon.value = true
+}
+
+const saveCoupon = async () => {
+  const name = couponForm.value.name.trim()
+  const required = Number(couponForm.value.required)
+  if (!name) {
+    uni.showToast({ title: '请输入特权名称', icon: 'none' })
+    return
+  }
+  if (!required || required <= 0) {
+    uni.showToast({ title: '请输入所需次数', icon: 'none' })
+    return
+  }
+  uni.showLoading({ title: '保存中...', mask: true })
+  try {
+    const coupon = await addCustomCoupon({
+      name,
+      required,
+      emoji: couponForm.value.emoji,
+    })
+    uni.hideLoading()
+    if (!coupon) {
+      uni.showToast({ title: '保存失败，请检查网络', icon: 'none' })
+      return
+    }
+    showAddCoupon.value = false
+    uni.showToast({ title: '特权已新增', icon: 'none' })
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: '保存失败，请重试', icon: 'none' })
+  }
+}
+
 const goBack = () => {
   const pages = getCurrentPages()
   if (pages.length > 1) {
@@ -158,8 +259,9 @@ const goBack = () => {
   display: flex;
   align-items: center;
   gap: 24rpx;
-  padding: 20rpx 40rpx 28rpx;
+  padding: 20rpx 230rpx 28rpx 40rpx;
   background: #FFFFFF;
+  box-sizing: border-box;
 }
 
 .back-btn {
@@ -211,6 +313,7 @@ const goBack = () => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .header-badge-text {
@@ -225,20 +328,92 @@ const goBack = () => {
 }
 
 .coupon-list {
-  padding: 32rpx;
+  padding: 32rpx 32rpx 40rpx;
   display: flex;
   flex-direction: column;
-  gap: 24rpx;
+  gap: 22rpx;
+}
+
+.add-coupon-panel {
+  min-height: 128rpx;
+  padding: 28rpx 30rpx;
+  border-radius: 30rpx;
+  background: linear-gradient(135deg, #FF4D4F 0%, #FF8C9A 100%);
+  display: flex;
+  align-items: center;
+  gap: 22rpx;
+  box-shadow: 0 14rpx 32rpx rgba(255, 77, 79, 0.22);
+  box-sizing: border-box;
+  transition: transform 0.2s ease;
+}
+
+.add-coupon-panel:active {
+  transform: scale(0.98);
+}
+
+.add-coupon-icon {
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 24rpx;
+  background: rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.add-coupon-icon-text {
+  font-size: 44rpx;
+  line-height: 44rpx;
+  color: #FFFFFF;
+  font-weight: bold;
+}
+
+.add-coupon-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.add-coupon-title {
+  font-size: 30rpx;
+  color: #FFFFFF;
+  font-weight: bold;
+}
+
+.add-coupon-desc {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.add-coupon-action {
+  height: 56rpx;
+  padding: 0 24rpx;
+  border-radius: 28rpx;
+  background: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.add-coupon-action-text {
+  font-size: 24rpx;
+  color: #FF4D4F;
+  font-weight: bold;
 }
 
 .coupon-card {
   background: #FFFFFF;
-  border-radius: 32rpx;
+  border-radius: 30rpx;
   padding: 32rpx;
-  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+  border: 2rpx solid rgba(255, 77, 79, 0.06);
+  box-shadow: 0 10rpx 28rpx rgba(29, 33, 41, 0.06);
   display: flex;
   flex-direction: column;
-  gap: 28rpx;
+  gap: 26rpx;
   animation: fadeInUp 0.4s ease both;
 }
 
@@ -373,6 +548,67 @@ const goBack = () => {
   align-items: center;
   gap: 20rpx;
   animation: bounceIn 0.5s ease;
+}
+
+.add-coupon-card {
+  width: 620rpx;
+  background: #FFFFFF;
+  border-radius: 32rpx;
+  padding: 44rpx 36rpx 36rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  animation: bounceIn 0.5s ease;
+  box-sizing: border-box;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.edit-label {
+  font-size: 24rpx;
+  font-weight: bold;
+  color: #4E5969;
+}
+
+.edit-input {
+  width: 100%;
+  height: 76rpx;
+  padding: 0 22rpx;
+  border-radius: 18rpx;
+  background: #F7F8FA;
+  font-size: 26rpx;
+  color: #1D2129;
+  box-sizing: border-box;
+}
+
+.emoji-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.emoji-chip {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 18rpx;
+  background: #F7F8FA;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2rpx solid transparent;
+}
+
+.emoji-chip.active {
+  background: #FFF1F0;
+  border-color: #FF4D4F;
+}
+
+.emoji-chip-text {
+  font-size: 32rpx;
 }
 
 .redeem-emoji {

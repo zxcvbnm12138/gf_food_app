@@ -42,34 +42,21 @@
         <!-- 描述 -->
         <text class="item-desc">{{ detailDescription }}</text>
 
-        <!-- 甜度选择 -->
-        <view class="option-section" v-if="item.sweetOptions && item.sweetOptions.length > 0">
-          <text class="option-label">甜度选择</text>
+        <view
+          v-for="(group, groupIndex) in optionGroups"
+          :key="group.label + groupIndex"
+          class="option-section"
+        >
+          <text class="option-label">{{ group.label }}选择</text>
           <view class="option-row">
             <view
-              v-for="(opt, i) in item.sweetOptions"
-              :key="'s' + i"
+              v-for="(opt, i) in group.options"
+              :key="group.label + i"
               class="option-chip"
-              :class="{ active: selectedSweet === i }"
-              @click="selectSweet(i)"
+              :class="{ active: isOptionSelected(groupIndex, i) }"
+              @click="toggleOption(groupIndex, i)"
             >
-              <text class="option-text" :class="{ active: selectedSweet === i }">{{ opt }}</text>
-            </view>
-          </view>
-        </view>
-
-        <!-- 加料选择 -->
-        <view class="option-section" v-if="item.extraOptions && item.extraOptions.length > 0">
-          <text class="option-label">加料选择</text>
-          <view class="option-row">
-            <view
-              v-for="(opt, i) in item.extraOptions"
-              :key="'e' + i"
-              class="option-chip"
-              :class="{ active: selectedExtras.includes(i) }"
-              @click="toggleExtra(i)"
-            >
-              <text class="option-text" :class="{ active: selectedExtras.includes(i) }">{{ opt }}</text>
+              <text class="option-text" :class="{ active: isOptionSelected(groupIndex, i) }">{{ opt }}</text>
             </view>
           </view>
         </view>
@@ -114,12 +101,13 @@ import store, {
   stopMenuRealtimeSync,
   isFavoriteItem,
   toggleFavoriteItem,
+  getMenuItemOptionGroups,
 } from '@/store/index.js'
 
 const itemId = ref('')
 const quantity = ref(1)
-const selectedSweet = ref(0)
-const selectedExtras = ref([0])
+const selectedSingleOptions = ref({})
+const selectedMultiOptions = ref({})
 const showSuccess = ref(false)
 const isHeroDragging = ref(false)
 const heroHeight = ref(500)
@@ -138,6 +126,7 @@ const item = computed(() => {
 })
 
 const detailDescription = computed(() => item.value.fullDesc || item.value.desc || '')
+const optionGroups = computed(() => getMenuItemOptionGroups(item.value))
 
 const currentItemId = computed(() => item.value._id || item.value.id || itemId.value)
 const isFav = computed(() => isFavoriteItem(currentItemId.value))
@@ -188,16 +177,41 @@ onHide(() => {
   stopMenuRealtimeSync(MENU_REALTIME_OWNER)
 })
 
-const selectSweet = (index) => {
-  selectedSweet.value = index
+const getDefaultSelection = (groupIndex) => {
+  const group = optionGroups.value[groupIndex]
+  if (!group || group.options.length === 0) return []
+  if (group.multiple || groupIndex > 0) {
+    return selectedMultiOptions.value[groupIndex] || [0]
+  }
+  return [selectedSingleOptions.value[groupIndex] ?? 0]
 }
 
-const toggleExtra = (index) => {
-  const i = selectedExtras.value.indexOf(index)
-  if (i >= 0) {
-    selectedExtras.value.splice(i, 1)
-  } else {
-    selectedExtras.value.push(index)
+const isOptionSelected = (groupIndex, optionIndex) => {
+  return getDefaultSelection(groupIndex).includes(optionIndex)
+}
+
+const toggleOption = (groupIndex, optionIndex) => {
+  const group = optionGroups.value[groupIndex]
+  if (!group) return
+
+  if (group.multiple || groupIndex > 0) {
+    const current = [...(selectedMultiOptions.value[groupIndex] || [0])]
+    const existingIndex = current.indexOf(optionIndex)
+    if (existingIndex >= 0) {
+      current.splice(existingIndex, 1)
+    } else {
+      current.push(optionIndex)
+    }
+    selectedMultiOptions.value = {
+      ...selectedMultiOptions.value,
+      [groupIndex]: current,
+    }
+    return
+  }
+
+  selectedSingleOptions.value = {
+    ...selectedSingleOptions.value,
+    [groupIndex]: optionIndex,
   }
 }
 
@@ -247,13 +261,20 @@ const toggleFav = () => {
 }
 
 const handleAddToCart = () => {
-  const sweetName = item.value.sweetOptions?.[selectedSweet.value] || ''
-  const extraNames = selectedExtras.value.map(i => item.value.extraOptions?.[i] || '').filter(Boolean)
+  const selectedGroups = optionGroups.value
+    .map((group, groupIndex) => {
+      const values = getDefaultSelection(groupIndex)
+        .map(index => group.options[index])
+        .filter(Boolean)
+      return { label: group.label, values }
+    })
+    .filter(group => group.values.length > 0)
 
   for (let i = 0; i < quantity.value; i++) {
     addToCart(item.value, {
-      sweet: sweetName,
-      extras: extraNames,
+      sweet: selectedGroups[0]?.values?.[0] || '',
+      extras: selectedGroups.slice(1).flatMap(group => group.values),
+      groups: selectedGroups,
     })
   }
 

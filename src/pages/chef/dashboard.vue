@@ -78,7 +78,7 @@
 <script setup>
 import { computed, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud } from '@/store/index.js'
+import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud, getChefEntryUrl } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const chef = computed(() => store.chef)
 const currentRoomId = computed(() => store.roomId || '未加入房间')
@@ -90,6 +90,17 @@ const refreshOrders = async () => {
     await loadOrdersFromCloud()
   } catch (e) {
     console.warn('[ChefDashboard] 刷新订单失败', e)
+  }
+}
+
+const ensureMenuReady = async () => {
+  try {
+    const url = await getChefEntryUrl({ forceRefresh: true })
+    if (url === '/pages/chef/menu-init') {
+      uni.redirectTo({ url })
+    }
+  } catch (e) {
+    console.warn('[ChefDashboard] 检查菜单失败', e)
   }
 }
 
@@ -109,6 +120,7 @@ const stopPolling = () => {
 
 // onShow: 每次页面可见时立即刷新 + 启动轮询
 onShow(() => {
+  ensureMenuReady()
   startPolling()
 })
 

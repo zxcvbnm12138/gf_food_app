@@ -1,5 +1,5 @@
 <script>
-import { getRole, getRoomId } from '@/store/index.js'
+import { getRole, getRoomId, getChefEntryUrl } from '@/store/index.js'
 import { initCloud, checkLogin } from '@/services/cloud.js'
 
 export default {
@@ -21,7 +21,18 @@ export default {
       if (role === 'customer') {
         uni.switchTab({ url: '/pages/index/index' })
       } else if (role === 'chef') {
-        uni.switchTab({ url: '/pages/chef/dashboard' })
+        getChefEntryUrl({ forceRefresh: true })
+          .then((url) => {
+            if (url === '/pages/chef/menu-init') {
+              uni.redirectTo({ url })
+            } else {
+              uni.switchTab({ url })
+            }
+          })
+          .catch((e) => {
+            console.warn('[App] 主厨入口菜单检查失败:', e)
+            uni.switchTab({ url: '/pages/chef/dashboard' })
+          })
       }
     }
     // 如果缺少任何条件，留在 login 页

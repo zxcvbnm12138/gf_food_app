@@ -102,7 +102,9 @@ import store, {
   addToCart,
   getCartTotal,
   loadMenuFromCloud,
+  loadMenuCategoriesFromCloud,
   getAvailableItems,
+  getMenuItemOptionGroups,
   startMenuRealtimeSync,
   stopMenuRealtimeSync,
   consumePendingMenuCategory,
@@ -132,7 +134,10 @@ let menuPollTimer = null
 const MENU_POLL_INTERVAL = 5000 // 实时监听失败时，5秒轮询兜底
 
 const refreshMenu = async () => {
-  await loadMenuFromCloud()
+  await Promise.all([
+    loadMenuFromCloud(),
+    loadMenuCategoriesFromCloud(),
+  ])
 }
 
 const selectCategoryById = (categoryId) => {
@@ -211,9 +216,20 @@ const onSearchBlur = () => {
 }
 
 const quickAdd = (item) => {
+  const groups = getMenuItemOptionGroups(item)
+  const selectedGroups = groups
+    .map((group, index) => {
+      const values = group.options.length > 0
+        ? (group.multiple || index > 0 ? [group.options[0]] : [group.options[0]])
+        : []
+      return { label: group.label, values }
+    })
+    .filter(group => group.values.length > 0)
+
   addToCart(item, {
-    sweet: item.sweetOptions?.[0] || '',
-    extras: item.extraOptions?.[0] ? [item.extraOptions[0]] : [],
+    sweet: selectedGroups[0]?.values?.[0] || '',
+    extras: selectedGroups.slice(1).flatMap(group => group.values),
+    groups: selectedGroups,
   })
   showAddToast.value = true
   setTimeout(() => {

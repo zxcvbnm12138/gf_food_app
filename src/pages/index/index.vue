@@ -122,6 +122,7 @@ import { ref, computed } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
 import store, {
   loadMenuFromCloud,
+  loadMenuCategoriesFromCloud,
   getAvailableItems,
   startMenuRealtimeSync,
   stopMenuRealtimeSync,
@@ -142,7 +143,10 @@ let menuPollTimer = null
 const MENU_POLL_INTERVAL = 5000 // 实时监听失败时，5秒轮询兜底
 
 const refreshMenu = async () => {
-  await loadMenuFromCloud()
+  await Promise.all([
+    loadMenuFromCloud(),
+    loadMenuCategoriesFromCloud(),
+  ])
 }
 
 // 页面显示时加载云端菜品 + 启动轮询

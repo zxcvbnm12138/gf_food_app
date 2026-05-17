@@ -52,11 +52,13 @@
         <!-- 特权兑换券 -->
         <view class="section-head">
           <text class="section-title">特权兑换券 🎁</text>
-          <text class="section-link" @click="goCoupons">查看全部 ›</text>
+          <view class="section-actions">
+            <text class="section-link" @click="goCoupons">全部</text>
+          </view>
         </view>
 
         <view
-          v-for="(coupon, index) in coupons"
+          v-for="(coupon, index) in previewCoupons"
           :key="coupon.id"
           class="coupon-card"
           :style="{ animationDelay: (index * 0.08) + 's' }"
@@ -118,7 +120,7 @@
           <view class="setting-divider"></view>
           <view class="setting-row" @click="clearHistory">
             <text class="setting-icon">🧹</text>
-            <text class="setting-label">清除历史记录</text>
+            <text class="setting-label">清除当前房间订单数据</text>
             <view class="setting-chevron"></view>
           </view>
           <view class="setting-divider"></view>
@@ -146,6 +148,42 @@
     </scroll-view>
 
     <!-- 兑换弹窗 -->
+    <view class="redeem-overlay" v-if="showAddCoupon" @click="showAddCoupon = false">
+      <view class="add-coupon-card" @click.stop>
+        <text class="redeem-title">新增特权</text>
+        <view class="edit-field">
+          <text class="edit-label">特权图标</text>
+          <view class="emoji-picker">
+            <view
+              v-for="emoji in couponEmojiOptions"
+              :key="emoji"
+              class="emoji-chip"
+              :class="{ active: couponForm.emoji === emoji }"
+              @click="couponForm.emoji = emoji"
+            >
+              <text class="emoji-chip-text">{{ emoji }}</text>
+            </view>
+          </view>
+        </view>
+        <view class="edit-field">
+          <text class="edit-label">特权名称</text>
+          <input class="edit-input" v-model="couponForm.name" placeholder="比如 周末电影陪看券" maxlength="20" />
+        </view>
+        <view class="edit-field">
+          <text class="edit-label">所需投喂次数</text>
+          <input class="edit-input" v-model="couponForm.required" type="number" placeholder="20" />
+        </view>
+        <view class="redeem-actions">
+          <view class="redeem-btn cancel" @click="showAddCoupon = false">
+            <text class="redeem-btn-text cancel">取消</text>
+          </view>
+          <view class="redeem-btn confirm" @click="saveCoupon">
+            <text class="redeem-btn-text confirm">保存</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
     <view class="redeem-overlay" v-if="showRedeem">
       <view class="redeem-card">
         <text class="redeem-emoji">{{ redeemItem.emoji }}</text>
@@ -171,7 +209,6 @@
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import store, {
-  clearOrders,
   updateUserAvatar,
   setRole,
   clearRole,
@@ -179,12 +216,17 @@ import store, {
   clearRoomId,
   loadOrdersFromCloud,
   refreshUserStats,
+  getChefEntryUrl,
+  clearCurrentRoomOrdersData,
+  addCustomCoupon,
+  loadCustomCouponsFromCloud,
 } from '@/store/index.js'
 import { leaveRoom, checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
 
 const user = computed(() => store.user)
-const coupons = computed(() => store.coupons.slice(0, 3))
+const coupons = computed(() => store.coupons)
+const previewCoupons = computed(() => coupons.value.slice(0, 3))
 const roomId = computed(() => store.roomId)
 const allergyTags = computed(() => {
   const allergies = store.user.allergies
@@ -194,10 +236,22 @@ const allergyTags = computed(() => {
 })
 
 const showRedeem = ref(false)
+const showAddCoupon = ref(false)
 const redeemItem = ref({})
+const couponEmojiOptions = ['🎁', '💆‍♀️', '🛍️', '🎬', '🧋', '🎮', '📝', '🍰', '🌙', '💝', '🚗', '⭐']
+const couponForm = ref({
+  emoji: '🎁',
+  name: '',
+  required: '',
+})
 
 onShow(() => {
   refreshUserStats()
+  loadCustomCouponsFromCloud()
+    .then(() => refreshUserStats())
+    .catch((e) => {
+      console.warn('[Profile] 刷新云端特权失败', e)
+    })
   loadOrdersFromCloud()
     .then(() => refreshUserStats())
     .catch((e) => {
@@ -231,6 +285,46 @@ const confirmRedeem = () => {
     icon: 'none',
     duration: 2000
   })
+}
+
+const openAddCoupon = () => {
+  couponForm.value = {
+    emoji: '🎁',
+    name: '',
+    required: '',
+  }
+  showAddCoupon.value = true
+}
+
+const saveCoupon = async () => {
+  const name = couponForm.value.name.trim()
+  const required = Number(couponForm.value.required)
+  if (!name) {
+    uni.showToast({ title: '请输入特权名称', icon: 'none' })
+    return
+  }
+  if (!required || required <= 0) {
+    uni.showToast({ title: '请输入所需次数', icon: 'none' })
+    return
+  }
+  uni.showLoading({ title: '保存中...', mask: true })
+  try {
+    const coupon = await addCustomCoupon({
+      name,
+      required,
+      emoji: couponForm.value.emoji,
+    })
+    uni.hideLoading()
+    if (!coupon) {
+      uni.showToast({ title: '保存失败，请检查网络', icon: 'none' })
+      return
+    }
+    showAddCoupon.value = false
+    uni.showToast({ title: '特权已新增', icon: 'none' })
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: '保存失败，请重试', icon: 'none' })
+  }
 }
 
 const addDislike = () => {
@@ -276,24 +370,44 @@ const showAbout = () => {
 const clearHistory = () => {
   uni.showModal({
     title: '确认清除',
-    content: '确定要清除所有历史记录吗？',
+    content: '确定要清除当前房间的所有订单数据吗？菜单菜品会保留。',
     confirmColor: '#FF4D4F',
-    success: (res) => {
+    success: async (res) => {
       if (res.confirm) {
-        clearOrders()
-        uni.showToast({
-          title: '已清除 ✨',
-          icon: 'none',
-          duration: 1500
-        })
+        uni.showLoading({ title: '清除中...', mask: true })
+        try {
+          const success = await clearCurrentRoomOrdersData({ clearFavorites: true })
+          uni.hideLoading()
+          uni.showToast({
+            title: success ? '已清除当前房间订单' : '清除失败，请检查网络',
+            icon: 'none',
+            duration: success ? 1500 : 2500
+          })
+        } catch (e) {
+          uni.hideLoading()
+          uni.showToast({ title: '清除失败，请重试', icon: 'none', duration: 2500 })
+        }
       }
     }
   })
 }
 
-const switchToChef = () => {
+const switchToChef = async () => {
   setRole('chef')
-  uni.switchTab({ url: '/pages/chef/dashboard' })
+  uni.showLoading({ title: '检查菜单...', mask: true })
+  try {
+    const url = await getChefEntryUrl({ forceRefresh: true })
+    if (url === '/pages/chef/menu-init') {
+      uni.reLaunch({ url })
+    } else {
+      uni.switchTab({ url })
+    }
+  } catch (e) {
+    console.warn('[Profile] 进入主厨端前检查菜单失败', e)
+    uni.switchTab({ url: '/pages/chef/dashboard' })
+  } finally {
+    uni.hideLoading()
+  }
 }
 
 const copyRoomId = () => {
@@ -475,6 +589,12 @@ const doLogout = () => {
   align-items: center;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
 .section-title {
   font-size: 32rpx;
   font-weight: bold;
@@ -484,6 +604,11 @@ const doLogout = () => {
 .section-link {
   font-size: 24rpx;
   color: #86909C;
+}
+
+.section-link.add {
+  color: #FF4D4F;
+  font-weight: bold;
 }
 
 .section-title-solo {
@@ -717,6 +842,67 @@ const doLogout = () => {
   align-items: center;
   gap: 20rpx;
   animation: bounceIn 0.5s ease;
+}
+
+.add-coupon-card {
+  width: 620rpx;
+  background: #FFFFFF;
+  border-radius: 32rpx;
+  padding: 44rpx 36rpx 36rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  animation: bounceIn 0.5s ease;
+  box-sizing: border-box;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.edit-label {
+  font-size: 24rpx;
+  font-weight: bold;
+  color: #4E5969;
+}
+
+.edit-input {
+  width: 100%;
+  height: 76rpx;
+  padding: 0 22rpx;
+  border-radius: 18rpx;
+  background: #F7F8FA;
+  font-size: 26rpx;
+  color: #1D2129;
+  box-sizing: border-box;
+}
+
+.emoji-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.emoji-chip {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 18rpx;
+  background: #F7F8FA;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2rpx solid transparent;
+}
+
+.emoji-chip.active {
+  background: #FFF1F0;
+  border-color: #FF4D4F;
+}
+
+.emoji-chip-text {
+  font-size: 32rpx;
 }
 
 .redeem-emoji {

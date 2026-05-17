@@ -48,7 +48,7 @@
         <view class="settings-card">
           <view class="setting-row" @click="showAbout"><text class="setting-icon">💝</text><text class="setting-label">关于这个App</text><view class="setting-chevron"></view></view>
           <view class="setting-divider"></view>
-          <view class="setting-row" @click="clearHistory"><text class="setting-icon">🧹</text><text class="setting-label">清除所有数据</text><view class="setting-chevron"></view></view>
+          <view class="setting-row" @click="clearHistory"><text class="setting-icon">🧹</text><text class="setting-label">清除当前房间所有数据</text><view class="setting-chevron"></view></view>
           <view class="setting-divider"></view>
           <view class="setting-row" @click="doLogout"><text class="setting-icon">🚪</text><text class="setting-label">退出登录</text><view class="setting-chevron"></view></view>
         </view>
@@ -61,7 +61,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import store, { getOrdersByStatus, getTodayOrders, updateChefAvatar, clearOrders, clearRole, setRole, clearLoginState } from '@/store/index.js'
+import store, { getOrdersByStatus, getTodayOrders, updateChefAvatar, clearCurrentRoomAllData, clearRole, setRole, clearLoginState } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const chef = computed(() => store.chef)
 const totalDone = computed(() => getOrdersByStatus('done').length)
@@ -72,7 +72,29 @@ const switchToCustomer = () => { setRole('customer'); uni.switchTab({ url: '/pag
 const goOrders = () => uni.switchTab({ url: '/pages/chef/orders' })
 const goMenu = () => uni.switchTab({ url: '/pages/chef/menu-manage' })
 const showAbout = () => { uni.showModal({ title: '💝 关于投喂小厨房', content: '这是专属于你们的投喂小厨房～ 主厨端帮你管理订单和菜品，用心做的每一道菜，都是爱她的方式 ❤️', showCancel: false, confirmText: '好哒！', confirmColor: '#4080FF' }) }
-const clearHistory = () => { uni.showModal({ title: '确认清除', content: '确定要清除所有历史数据吗？', confirmColor: '#FF4D4F', success: (res) => { if (res.confirm) { clearOrders(); uni.showToast({ title: '已清除 ✨', icon: 'none' }) } } }) }
+const clearHistory = () => {
+  uni.showModal({
+    title: '确认清除',
+    content: '确定要清除当前房间的所有订单和菜品吗？此操作不可恢复。',
+    confirmColor: '#FF4D4F',
+    success: async (res) => {
+      if (!res.confirm) return
+      uni.showLoading({ title: '清除中...', mask: true })
+      try {
+        const success = await clearCurrentRoomAllData()
+        uni.hideLoading()
+        uni.showToast({
+          title: success ? '已清除当前房间数据' : '清除失败，请检查网络',
+          icon: 'none',
+          duration: success ? 1500 : 2500,
+        })
+      } catch (e) {
+        uni.hideLoading()
+        uni.showToast({ title: '清除失败，请重试', icon: 'none', duration: 2500 })
+      }
+    },
+  })
+}
 const doLogout = () => { clearLoginState(); clearRole(); uni.reLaunch({ url: '/pages/login/login' }) }
 </script>
 

@@ -82,6 +82,27 @@
               >
                 <text class="cat-chip-text">{{ cat.label }}</text>
               </view>
+              <view class="cat-chip add-cat-chip" @click="showCategoryCreator = !showCategoryCreator">
+                <text class="cat-chip-text add">+ 增加分类</text>
+              </view>
+            </view>
+            <view v-if="showCategoryCreator" class="category-creator">
+              <input class="edit-input" v-model="newCategoryName" placeholder="分类名称，如 下饭菜" maxlength="12" />
+              <text class="edit-label small">选择分类图标</text>
+              <view class="emoji-picker">
+                <view
+                  v-for="emoji in categoryEmojiOptions"
+                  :key="emoji"
+                  class="emoji-chip"
+                  :class="{ active: newCategoryEmoji === emoji }"
+                  @click="newCategoryEmoji = emoji"
+                >
+                  <text class="emoji-chip-text">{{ emoji }}</text>
+                </view>
+              </view>
+              <view class="create-category-btn" :class="{ disabled: isCreatingCategory }" @click="createCategory">
+                <text class="create-category-text">{{ isCreatingCategory ? '添加中...' : '保存分类' }}</text>
+              </view>
             </view>
           </view>
 
@@ -115,13 +136,15 @@
           </view>
 
           <view class="edit-field">
-            <text class="edit-label">甜度选项</text>
-            <input class="edit-input" v-model="editForm.sweetOptionsStr" placeholder="少少糖,正常甜" />
+            <text class="edit-label">自定义选项一</text>
+            <input class="edit-input" v-model="editForm.optionGroup1Label" placeholder="选项名称，如 甜度 / 辣度 / 冰度" maxlength="12" />
+            <input class="edit-input" v-model="editForm.optionGroup1OptionsStr" placeholder="选项内容，如 微辣,中辣,特辣" />
           </view>
 
           <view class="edit-field">
-            <text class="edit-label">加料选项</text>
-            <input class="edit-input" v-model="editForm.extraOptionsStr" placeholder="加蛋,加芝士" />
+            <text class="edit-label">自定义选项二</text>
+            <input class="edit-input" v-model="editForm.optionGroup2Label" placeholder="选项名称，如 加料 / 份量 / 做法" maxlength="12" />
+            <input class="edit-input" v-model="editForm.optionGroup2OptionsStr" placeholder="选项内容，如 加蛋,加肉,不要葱" />
           </view>
         </scroll-view>
 
@@ -140,13 +163,18 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import store, { loadMenuFromCloud, addMenuItemToCloud, uploadImageToCloud } from '@/store/index.js'
+import store, { loadMenuFromCloud, addMenuItemToCloud, uploadImageToCloud, loadMenuCategoriesFromCloud, addMenuCategoryToCloud } from '@/store/index.js'
 import { isCloudAvailable } from '@/services/cloud.js'
 
 const isLoading = ref(true)
 const showEdit = ref(false)
 const isSaving = ref(false)
 const isUploading = ref(false)
+const isCreatingCategory = ref(false)
+const showCategoryCreator = ref(false)
+const newCategoryName = ref('')
+const newCategoryEmoji = ref('🍽️')
+const categoryEmojiOptions = ['🔥', '🍰', '🥤', '🍜', '🥗', '🍵', '🍚', '🥩', '🌶️', '🍲', '🍱', '🍽️']
 
 const editForm = ref({
   name: '',
@@ -157,29 +185,45 @@ const editForm = ref({
   image: '/static/logo.png',
   imagePreview: '',
   price: '免费',
-  sweetOptionsStr: '',
-  extraOptionsStr: '',
+  optionGroup1Label: '甜度',
+  optionGroup1OptionsStr: '',
+  optionGroup2Label: '加料',
+  optionGroup2OptionsStr: '',
 })
 
 const menuItems = computed(() => store.menuItems)
 const canEnter = computed(() => menuItems.value.length > 0)
 
-const catOptions = [
-  { id: 'hot', label: '🔥 热销' },
-  { id: 'dessert', label: '🍰 甜点' },
-  { id: 'drink', label: '🥤 饮品' },
-  { id: 'carb', label: '🍜 面食' },
-  { id: 'light', label: '🥗 轻食' },
-  { id: 'warm', label: '🍵 暖饮' },
-]
-
-const catMap = { hot: '🔥 热销', dessert: '🍰 甜点', drink: '🥤 饮品', carb: '🍜 面食', light: '🥗 轻食', warm: '🍵 暖饮' }
-const getCatName = (cat) => catMap[cat] || cat
+const catOptions = computed(() => store.categories.map(cat => ({
+  id: cat.id,
+  label: `${cat.emoji ? cat.emoji + ' ' : ''}${cat.name}`,
+  emoji: cat.emoji || '🍽️',
+})))
+const getCatName = (cat) => {
+  const target = store.categories.find(item => item.id === cat)
+  return target ? `${target.emoji ? target.emoji + ' ' : ''}${target.name}` : cat
+}
+const getCatEmoji = (cat) => store.categories.find(item => item.id === cat)?.emoji || '🍽️'
 const parseOptionList = (value) => (
   value
     ? value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
     : []
 )
+const buildOptionGroups = (form) => {
+  const groups = [
+    {
+      label: form.optionGroup1Label.trim(),
+      options: parseOptionList(form.optionGroup1OptionsStr),
+      multiple: false,
+    },
+    {
+      label: form.optionGroup2Label.trim(),
+      options: parseOptionList(form.optionGroup2OptionsStr),
+      multiple: true,
+    },
+  ]
+  return groups.filter(group => group.label && group.options.length > 0)
+}
 
 onMounted(async () => {
   if (!store.roomId) {
@@ -189,7 +233,10 @@ onMounted(async () => {
   }
 
   isLoading.value = true
-  await loadMenuFromCloud()
+  await Promise.all([
+    loadMenuFromCloud(),
+    loadMenuCategoriesFromCloud(),
+  ])
   isLoading.value = false
   if (menuItems.value.length === 0) {
     openAdd()
@@ -206,8 +253,10 @@ const resetForm = () => {
     image: '/static/logo.png',
     imagePreview: '',
     price: '免费',
-    sweetOptionsStr: '',
-    extraOptionsStr: '',
+    optionGroup1Label: '甜度',
+    optionGroup1OptionsStr: '',
+    optionGroup2Label: '加料',
+    optionGroup2OptionsStr: '',
   }
 }
 
@@ -230,17 +279,23 @@ const saveItem = async () => {
     return
   }
 
+  const optionGroups = buildOptionGroups(form)
+  const primaryGroup = optionGroups[0]
+  const secondaryGroup = optionGroups[1]
   const data = {
     name,
     desc: form.desc.trim() || fullDesc.slice(0, 40),
     fullDesc,
     category: form.category,
-    emoji: form.emoji,
+    emoji: getCatEmoji(form.category),
     image: form.image || '/static/logo.png',
     price: form.price || '免费',
     available: true,
-    sweetOptions: parseOptionList(form.sweetOptionsStr),
-    extraOptions: parseOptionList(form.extraOptionsStr),
+    optionGroups,
+    sweetLabel: primaryGroup?.label || '',
+    sweetOptions: primaryGroup?.options || [],
+    extraLabel: secondaryGroup?.label || '',
+    extraOptions: secondaryGroup?.options || [],
     sortOrder: menuItems.value.length + 1,
   }
 
@@ -308,6 +363,38 @@ const chooseAndUploadImage = () => {
   })
 }
 
+const createCategory = async () => {
+  if (isCreatingCategory.value) return
+  const name = newCategoryName.value.trim()
+  if (!name) {
+    uni.showToast({ title: '请输入分类名称', icon: 'none' })
+    return
+  }
+
+  isCreatingCategory.value = true
+  try {
+    const category = await addMenuCategoryToCloud({
+      name,
+      emoji: newCategoryEmoji.value,
+      sortOrder: store.categories.length + 1,
+    })
+    if (category) {
+      editForm.value.category = category.id
+      newCategoryName.value = ''
+      newCategoryEmoji.value = '🍽️'
+      showCategoryCreator.value = false
+      uni.showToast({ title: '分类已添加', icon: 'none' })
+    } else {
+      uni.showToast({ title: '添加失败，请重新部署云函数', icon: 'none' })
+    }
+  } catch (e) {
+    console.warn('[MenuInit] 新增分类失败', e)
+    uni.showToast({ title: '添加分类失败，请稍后重试', icon: 'none' })
+  } finally {
+    isCreatingCategory.value = false
+  }
+}
+
 const finishInit = () => {
   if (!canEnter.value) {
     uni.showToast({ title: '请先添加至少一道菜品', icon: 'none' })
@@ -324,7 +411,7 @@ const finishInit = () => {
 .title-wrap { display: flex; flex-direction: column; gap: 8rpx; min-width: 0; }
 .page-title { font-size: 40rpx; font-weight: bold; color: #1D2129; }
 .page-subtitle { font-size: 24rpx; color: #86909C; letter-spacing: 2rpx; font-family: 'Courier New', monospace; }
-.count-pill { padding: 10rpx 24rpx; border-radius: 24rpx; background: #E8F3FF; flex-shrink: 0; }
+.count-pill { padding: 10rpx 24rpx; border-radius: 24rpx; background: #E8F3FF; flex-shrink: 0; margin-right: 200rpx; }
 .count-text { font-size: 24rpx; color: #4080FF; font-weight: bold; }
 .menu-scroll { flex: 1; overflow: hidden; }
 .menu-list { padding: 28rpx 32rpx 240rpx; display: flex; flex-direction: column; gap: 20rpx; }
@@ -352,20 +439,31 @@ const finishInit = () => {
 .secondary-btn-text { font-size: 28rpx; color: #4E5969; font-weight: bold; }
 .primary-btn-text { font-size: 28rpx; color: #FFFFFF; font-weight: bold; }
 .edit-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: fadeIn 0.25s ease; }
-.edit-card { width: 680rpx; max-height: 84vh; background: #FFFFFF; border-radius: 32rpx; padding: 40rpx 36rpx 32rpx; display: flex; flex-direction: column; gap: 20rpx; animation: bounceIn 0.45s ease; }
+.edit-card { width: 680rpx; max-height: 84vh; background: #FFFFFF; border-radius: 32rpx; padding: 40rpx 36rpx 32rpx; display: flex; flex-direction: column; gap: 20rpx; animation: bounceIn 0.45s ease; box-sizing: border-box; }
 .edit-title { font-size: 34rpx; font-weight: bold; color: #1D2129; text-align: center; }
 .edit-scroll { max-height: 56vh; overflow: hidden; }
 .edit-field { display: flex; flex-direction: column; gap: 10rpx; margin-bottom: 20rpx; }
 .edit-label { font-size: 24rpx; font-weight: bold; color: #4E5969; }
-.edit-input { width: 100%; height: 72rpx; font-size: 26rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 0 20rpx; }
-.edit-textarea { width: 100%; font-size: 24rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 20rpx; min-height: 100rpx; line-height: 1.6; }
+.edit-label.small { font-size: 22rpx; color: #86909C; margin-top: 4rpx; }
+.edit-input { width: 100%; height: 72rpx; font-size: 26rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 0 20rpx; box-sizing: border-box; }
+.edit-textarea { width: 100%; font-size: 24rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 20rpx; min-height: 100rpx; line-height: 1.6; box-sizing: border-box; }
 .edit-textarea.large { min-height: 140rpx; }
 .cat-picker { display: flex; flex-wrap: wrap; gap: 12rpx; }
 .cat-chip { padding: 10rpx 24rpx; border-radius: 24rpx; background: #F2F3F5; transition: all 0.2s ease; }
 .cat-chip.active { background: #E8F3FF; }
+.cat-chip.add-cat-chip { background: #FFF7E6; }
 .cat-chip-text { font-size: 22rpx; color: #4E5969; }
+.cat-chip-text.add { color: #FA8C16; font-weight: bold; }
 .cat-chip.active .cat-chip-text { color: #4080FF; font-weight: bold; }
-.image-upload-area { position: relative; width: 100%; height: 260rpx; border-radius: 20rpx; overflow: hidden; background: #F7F8FA; border: 2rpx dashed #C9CDD4; }
+.category-creator { margin-top: 16rpx; padding: 20rpx; border-radius: 20rpx; background: #F7F8FA; display: flex; flex-direction: column; gap: 16rpx; box-sizing: border-box; }
+.emoji-picker { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.emoji-chip { width: 64rpx; height: 64rpx; border-radius: 18rpx; background: #FFFFFF; display: flex; align-items: center; justify-content: center; border: 2rpx solid transparent; transition: all 0.2s ease; }
+.emoji-chip.active { border-color: #4080FF; background: #E8F3FF; transform: scale(1.04); }
+.emoji-chip-text { font-size: 32rpx; }
+.create-category-btn { height: 72rpx; border-radius: 36rpx; background: #4080FF; display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease; }
+.create-category-btn.disabled { opacity: 0.6; }
+.create-category-text { font-size: 26rpx; color: #FFFFFF; font-weight: bold; }
+.image-upload-area { position: relative; width: 100%; height: 260rpx; border-radius: 20rpx; overflow: hidden; background: #F7F8FA; border: 2rpx dashed #C9CDD4; box-sizing: border-box; }
 .upload-preview { width: 100%; height: 100%; }
 .upload-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12rpx; }
 .upload-spinner { border-color: rgba(255,255,255,0.3); border-top-color: #FFFFFF; }

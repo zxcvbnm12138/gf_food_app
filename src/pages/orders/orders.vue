@@ -157,7 +157,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import { loadOrdersFromCloud, getCurrentRoomOrders, getRushCooldownRemaining, rushOrderAction } from '@/store/index.js'
+import { loadOrdersFromCloud, getCurrentRoomOrders, getRushCooldownRemaining, rushOrderAction, formatOrderItemOptions } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const weekDays = ['日', '一', '二', '三', '四', '五', '六']
@@ -299,11 +299,7 @@ const onHeatmapTouchEnd = (event) => {
 }
 
 const getOptionsText = (item) => {
-  const parts = []
-  if (item.options?.sweet) parts.push(item.options.sweet)
-  if (item.options?.extras?.length) parts.push(...item.options.extras)
-  if (item.options?.extra) parts.push(item.options.extra)
-  return parts.join(' / ') || '默认口味'
+  return formatOrderItemOptions(item)
 }
 
 const getOrderSummary = (order) => {

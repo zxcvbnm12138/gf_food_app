@@ -8,15 +8,175 @@ cloud.init({
 const db = cloud.database()
 const _ = db.command
 
+const DEFAULT_MENU_CATEGORIES = [
+  { id: 'hot', name: '热销', emoji: '🔥', color: '#FFF1F0', sortOrder: 1 },
+  { id: 'dessert', name: '甜点', emoji: '🍰', color: '#FFF7E6', sortOrder: 2 },
+  { id: 'drink', name: '饮品', emoji: '🥤', color: '#E6FFFB', sortOrder: 3 },
+  { id: 'carb', name: '面食', emoji: '🍜', color: '#F0F5FF', sortOrder: 4 },
+  { id: 'light', name: '轻食', emoji: '🥗', color: '#F6FFED', sortOrder: 5 },
+  { id: 'warm', name: '暖饮', emoji: '🍵', color: '#E8F3FF', sortOrder: 6 },
+]
+
+function normalizeRoomId(roomId) {
+  return roomId ? String(roomId).trim().toUpperCase() : ''
+}
+
+function isCollectionMissing(error) {
+  const errCode = error && (error.errCode || error.code)
+  const message = String((error && error.message) || error || '').toLowerCase()
+  return errCode === -502005 ||
+    message.includes('collection not exists') ||
+    message.includes('collection not exist') ||
+    message.includes('collection does not exist') ||
+    message.includes('not exist')
+}
+
+function isCollectionAlreadyExists(error) {
+  const message = String((error && error.message) || error || '').toLowerCase()
+  return message.includes('already exists') ||
+    message.includes('already exist') ||
+    message.includes('collection exists') ||
+    message.includes('collection existed')
+}
+
+async function ensureCollection(collectionName) {
+  if (typeof db.createCollection !== 'function') return
+  try {
+    await db.createCollection(collectionName)
+  } catch (e) {
+    if (!isCollectionAlreadyExists(e)) throw e
+  }
+}
+
+async function addCollectionDoc(collectionName, data) {
+  try {
+    return await db.collection(collectionName).add({ data })
+  } catch (e) {
+    if (!isCollectionMissing(e)) throw e
+    await ensureCollection(collectionName)
+    return db.collection(collectionName).add({ data })
+  }
+}
+
+async function touchRoomMenu(roomId) {
+  roomId = normalizeRoomId(roomId)
+  if (!roomId) return
+
+  try {
+    const roomRes = await db.collection('rooms').where({ roomId }).limit(1).get()
+    if (!roomRes.data || roomRes.data.length === 0) return
+
+    const room = roomRes.data[0]
+    const nextVersion = (Number(room.menuVersion) || 0) + 1
+    await db.collection('rooms').doc(room._id).update({
+      data: {
+        menuUpdatedAt: new Date(),
+        menuVersion: nextVersion,
+      },
+    })
+  } catch (e) {
+    console.warn('更新房间菜单版本失败:', e)
+  }
+}
+
+async function seedCategories(roomId) {
+  const now = new Date()
+  await Promise.all(DEFAULT_MENU_CATEGORIES.map(category => addCollectionDoc('menu_categories', {
+    ...category,
+    roomId,
+    createdAt: now,
+    updatedAt: now,
+  })))
+  await touchRoomMenu(roomId)
+  return DEFAULT_MENU_CATEGORIES.map(category => ({ ...category, roomId }))
+}
+
+async function getCategories(roomId) {
+  let countRes
+  try {
+    countRes = await db.collection('menu_categories').where({ roomId }).count()
+  } catch (e) {
+    if (isCollectionMissing(e)) {
+      return seedCategories(roomId)
+    }
+    throw e
+  }
+  if (countRes.total === 0) {
+    return seedCategories(roomId)
+  }
+
+  const batchTimes = Math.ceil(countRes.total / 100)
+  const tasks = []
+  for (let i = 0; i < batchTimes; i++) {
+    tasks.push(
+      db.collection('menu_categories')
+        .where({ roomId })
+        .skip(i * 100)
+        .limit(100)
+        .get()
+    )
+  }
+
+  const results = await Promise.all(tasks)
+  return results
+    .reduce((all, result) => all.concat(result.data || []), [])
+    .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
+}
+
+async function getCustomCoupons(roomId) {
+  let countRes
+  try {
+    countRes = await db.collection('custom_coupons').where({ roomId }).count()
+  } catch (e) {
+    if (isCollectionMissing(e)) {
+      return []
+    }
+    throw e
+  }
+
+  if (countRes.total === 0) return []
+
+  const batchTimes = Math.ceil(countRes.total / 100)
+  const tasks = []
+  for (let i = 0; i < batchTimes; i++) {
+    tasks.push(
+      db.collection('custom_coupons')
+        .where({ roomId })
+        .skip(i * 100)
+        .limit(100)
+        .get()
+    )
+  }
+
+  const results = await Promise.all(tasks)
+  return results
+    .reduce((all, result) => all.concat(result.data || []), [])
+    .sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime() || 0
+      const bTime = new Date(b.createdAt || 0).getTime() || 0
+      return aTime - bTime
+    })
+}
+
 exports.main = async (event, context) => {
   const rawRoomId = event.roomId ? String(event.roomId).trim() : ''
-  const roomId = rawRoomId.toUpperCase()
+  const roomId = normalizeRoomId(rawRoomId)
 
   if (!roomId) {
     return { success: false, message: '缺少 roomId', items: [] }
   }
 
   try {
+    if (event.action === 'getCategories') {
+      const categories = await getCategories(roomId)
+      return { success: true, categories }
+    }
+
+    if (event.action === 'getCoupons') {
+      const coupons = await getCustomCoupons(roomId)
+      return { success: true, coupons }
+    }
+
     const roomIds = Array.from(new Set([rawRoomId, roomId].filter(Boolean)))
     const query = roomIds.length > 1 ? { roomId: _.in(roomIds) } : { roomId }
     const countRes = await db.collection('menu_items').where(query).count()

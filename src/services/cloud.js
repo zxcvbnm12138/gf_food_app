@@ -103,6 +103,48 @@ function isCloudFunctionNotFound(error) {
     message.includes('FunctionName parameter could not be found')
 }
 
+function isCollectionMissingError(error) {
+  const errCode = error?.errCode || error?.code
+  const message = String(error?.message || error || '').toLowerCase()
+  return errCode === -502005 ||
+    message.includes('collection not exists') ||
+    message.includes('collection not exist') ||
+    message.includes('collection does not exist') ||
+    message.includes('not exist')
+}
+
+function isCollectionAlreadyExistsError(error) {
+  const message = String(error?.message || error || '').toLowerCase()
+  return message.includes('already exists') ||
+    message.includes('already exist') ||
+    message.includes('collection exists') ||
+    message.includes('collection existed')
+}
+
+async function ensureDbCollection(collectionName) {
+  const db = getDB()
+  if (!db || typeof db.createCollection !== 'function') return false
+  try {
+    await db.createCollection(collectionName)
+    return true
+  } catch (e) {
+    return isCollectionAlreadyExistsError(e)
+  }
+}
+
+async function addCloudDbDoc(collectionName, data) {
+  const db = getDB()
+  if (!db) throw new Error('云数据库未初始化')
+  try {
+    return await db.collection(collectionName).add({ data })
+  } catch (e) {
+    if (!isCollectionMissingError(e)) throw e
+    const created = await ensureDbCollection(collectionName)
+    if (!created) throw e
+    return db.collection(collectionName).add({ data })
+  }
+}
+
 /**
  * 微信登录，获取 openid
  * 通过 login 云函数获取微信上下文，并在 users 集合中按 openid 去重。
@@ -824,7 +866,391 @@ export async function migrateLocalImagesToCloud(roomId) {
   }
 }
 
-// ========== 菜品 CRUD ==========
+// ========== 菜品分类 & CRUD ==========
+
+const DEFAULT_MENU_CATEGORIES = [
+  { id: 'hot', name: '热销', emoji: '🔥', color: '#FFF1F0', sortOrder: 1 },
+  { id: 'dessert', name: '甜点', emoji: '🍰', color: '#FFF7E6', sortOrder: 2 },
+  { id: 'drink', name: '饮品', emoji: '🥤', color: '#E6FFFB', sortOrder: 3 },
+  { id: 'carb', name: '面食', emoji: '🍜', color: '#F0F5FF', sortOrder: 4 },
+  { id: 'light', name: '轻食', emoji: '🥗', color: '#F6FFED', sortOrder: 5 },
+  { id: 'warm', name: '暖饮', emoji: '🍵', color: '#E8F3FF', sortOrder: 6 },
+]
+
+function normalizeCategory(category) {
+  if (!category) return null
+  const name = String(category.name || category.label || '').trim()
+  const id = category.id ? String(category.id).trim() : ''
+  if (!id || !name) return null
+  return {
+    id,
+    name,
+    emoji: String(category.emoji || '🍽️').trim() || '🍽️',
+    color: category.color || '#E8F3FF',
+    sortOrder: Number(category.sortOrder) || 999,
+    roomId: normalizeRoomId(category.roomId || ''),
+    _id: category._id || '',
+  }
+}
+
+function normalizeCategories(categories) {
+  const map = new Map()
+  ;(Array.isArray(categories) ? categories : []).forEach((category) => {
+    const normalized = normalizeCategory(category)
+    if (!normalized) return
+    map.set(normalized.id, normalized)
+  })
+  return Array.from(map.values())
+    .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
+}
+
+function buildCategoryId(name) {
+  const base = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `cat_${base || Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+}
+
+export function getDefaultMenuCategories() {
+  return DEFAULT_MENU_CATEGORIES.map(category => ({ ...category }))
+}
+
+async function seedMenuCategories(roomId) {
+  roomId = normalizeRoomId(roomId)
+  if (!roomId || !isCloudAvailable() || !cloudInited) return getDefaultMenuCategories()
+
+  try {
+    const now = new Date()
+    await Promise.all(DEFAULT_MENU_CATEGORIES.map(category => addCloudDbDoc('menu_categories', {
+      ...category,
+      roomId,
+      createdAt: now,
+      updatedAt: now,
+    })))
+    await touchRoomMenuVersion(roomId)
+    return getDefaultMenuCategories().map(category => ({ ...category, roomId }))
+  } catch (e) {
+    console.warn('[Cloud] 初始化房间分类失败:', e)
+    return getDefaultMenuCategories()
+  }
+}
+
+export async function fetchMenuCategories(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return getDefaultMenuCategories()
+  }
+
+  if (!roomId) return getDefaultMenuCategories()
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'getMenuItems',
+      data: {
+        action: 'getCategories',
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && Array.isArray(res.result.categories)) {
+      return normalizeCategories(res.result.categories)
+    }
+    console.warn('[Cloud] 云函数获取分类返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数获取分类失败，尝试直接查询:', e.message || e)
+  }
+
+  try {
+    const db = getDB()
+    let countRes
+    try {
+      countRes = await db.collection('menu_categories').where({ roomId }).count()
+    } catch (countErr) {
+      if (isCollectionMissingError(countErr)) {
+        return seedMenuCategories(roomId)
+      }
+      throw countErr
+    }
+    if (countRes.total === 0) {
+      return seedMenuCategories(roomId)
+    }
+
+    const batchTimes = Math.ceil(countRes.total / 20)
+    const tasks = []
+    for (let i = 0; i < batchTimes; i++) {
+      tasks.push(db.collection('menu_categories')
+        .where({ roomId })
+        .orderBy('sortOrder', 'asc')
+        .skip(i * 20)
+        .limit(20)
+        .get())
+    }
+    const results = await Promise.all(tasks)
+    return normalizeCategories(results.reduce((all, result) => all.concat(result.data || []), []))
+  } catch (e) {
+    console.error('[Cloud] 获取分类失败:', e)
+    return getDefaultMenuCategories()
+  }
+}
+
+export async function addMenuCategory(categoryData, roomId) {
+  roomId = normalizeRoomId(roomId)
+  const name = String(categoryData?.name || '').trim()
+  if (!name || !roomId) return null
+
+  const data = {
+    id: categoryData.id || buildCategoryId(name),
+    name,
+    emoji: String(categoryData.emoji || '🍽️').trim() || '🍽️',
+    color: categoryData.color || '#E8F3FF',
+    sortOrder: Number(categoryData.sortOrder) || 999,
+  }
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return { ...data, roomId }
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateMenuItem',
+      data: {
+        action: 'addCategory',
+        updateFields: data,
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && res.result.category) {
+      return normalizeCategory(res.result.category)
+    }
+    console.warn('[Cloud] 云函数新增分类返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数新增分类失败，尝试直接新增:', e.message || e)
+  }
+
+  try {
+    const now = new Date()
+    const res = await addCloudDbDoc('menu_categories', {
+      ...data,
+      roomId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    await touchRoomMenuVersion(roomId)
+    return { ...data, roomId, _id: res._id }
+  } catch (e) {
+    console.error('[Cloud] 新增分类失败:', e)
+    return null
+  }
+}
+
+export async function deleteMenuCategory(categoryId, roomId, fallbackCategoryId = '') {
+  roomId = normalizeRoomId(roomId)
+  categoryId = String(categoryId || '').trim()
+  fallbackCategoryId = String(fallbackCategoryId || '').trim()
+
+  if (!categoryId || !roomId || categoryId === fallbackCategoryId) return false
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return true
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateMenuItem',
+      data: {
+        action: 'deleteCategory',
+        categoryId,
+        fallbackCategoryId,
+        roomId,
+      },
+    })
+    if (res.result && res.result.success) {
+      console.log('[Cloud] 云函数删除分类成功:', categoryId)
+      return true
+    }
+    console.warn('[Cloud] 云函数删除分类返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数删除分类失败，尝试直接删除:', e.message || e)
+  }
+
+  try {
+    const db = getDB()
+    const countRes = await db.collection('menu_categories').where({ roomId }).count()
+    if ((Number(countRes.total) || 0) <= 1) return false
+
+    let removed = 0
+    while (true) {
+      const res = await db.collection('menu_categories')
+        .where({ roomId, id: categoryId })
+        .limit(20)
+        .get()
+      const docs = Array.isArray(res.data) ? res.data : []
+      if (docs.length === 0) break
+
+      await Promise.all(docs.map((doc) => db.collection('menu_categories').doc(doc._id).remove()))
+      removed += docs.length
+      if (docs.length < 20) break
+    }
+
+    if (!removed) return false
+
+    if (fallbackCategoryId) {
+      while (true) {
+        const res = await db.collection('menu_items')
+          .where({ roomId, category: categoryId })
+          .limit(20)
+          .get()
+        const docs = Array.isArray(res.data) ? res.data : []
+        if (docs.length === 0) break
+
+        await Promise.all(docs.map((doc) => db.collection('menu_items').doc(doc._id).update({
+          data: {
+            category: fallbackCategoryId,
+            updatedAt: new Date(),
+          },
+        })))
+        if (docs.length < 20) break
+      }
+    }
+
+    await touchRoomMenuVersion(roomId)
+    console.log('[Cloud] 删除分类成功:', categoryId)
+    return true
+  } catch (e) {
+    if (isCollectionMissingError(e)) {
+      console.warn('[Cloud] 删除分类失败，分类集合不存在:', e)
+      return false
+    }
+    console.error('[Cloud] 删除分类失败:', e)
+    return false
+  }
+}
+
+function normalizeCoupon(coupon) {
+  if (!coupon) return null
+  const name = String(coupon.name || '').trim()
+  const required = Math.max(0, Number(coupon.required) || 0)
+  if (!name || !required) return null
+  return {
+    id: coupon.id || coupon._id || '',
+    name,
+    desc: coupon.desc || `累计投喂 ${required} 次即可兑换`,
+    emoji: String(coupon.emoji || '🎁').trim() || '🎁',
+    color: coupon.color || '#FFF1F0',
+    required,
+    available: false,
+    custom: true,
+    roomId: normalizeRoomId(coupon.roomId || ''),
+    _id: coupon._id || '',
+  }
+}
+
+function normalizeCoupons(coupons) {
+  return (Array.isArray(coupons) ? coupons : [])
+    .map(normalizeCoupon)
+    .filter(Boolean)
+}
+
+export async function fetchCustomCoupons(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return null
+  }
+
+  if (!roomId) return []
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'getMenuItems',
+      data: {
+        action: 'getCoupons',
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && Array.isArray(res.result.coupons)) {
+      return normalizeCoupons(res.result.coupons)
+    }
+    console.warn('[Cloud] 云函数获取特权返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数获取特权失败，尝试直接查询:', e.message || e)
+  }
+
+  try {
+    const db = getDB()
+    let countRes
+    try {
+      countRes = await db.collection('custom_coupons').where({ roomId }).count()
+    } catch (countErr) {
+      if (isCollectionMissingError(countErr)) {
+        return []
+      }
+      throw countErr
+    }
+
+    if (countRes.total === 0) return []
+
+    const batchTimes = Math.ceil(countRes.total / 20)
+    const tasks = []
+    for (let i = 0; i < batchTimes; i++) {
+      tasks.push(db.collection('custom_coupons')
+        .where({ roomId })
+        .skip(i * 20)
+        .limit(20)
+        .get())
+    }
+    const results = await Promise.all(tasks)
+    return normalizeCoupons(results.reduce((all, result) => all.concat(result.data || []), []))
+  } catch (e) {
+    console.error('[Cloud] 获取特权失败:', e)
+    return null
+  }
+}
+
+export async function addCustomCoupon(couponData, roomId) {
+  roomId = normalizeRoomId(roomId)
+  const coupon = normalizeCoupon({ ...couponData, roomId })
+  if (!coupon || !roomId) return null
+
+  if (!isCloudAvailable() || !cloudInited) {
+    console.warn('[Cloud] 云环境不可用，已取消新增特权')
+    return null
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateMenuItem',
+      data: {
+        action: 'addCoupon',
+        updateFields: coupon,
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && res.result.coupon) {
+      return normalizeCoupon(res.result.coupon)
+    }
+    console.warn('[Cloud] 云函数新增特权返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数新增特权失败，尝试直接新增:', e.message || e)
+  }
+
+  try {
+    const now = new Date()
+    const res = await addCloudDbDoc('custom_coupons', {
+      ...coupon,
+      roomId,
+      custom: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return { ...coupon, roomId, _id: res._id }
+  } catch (e) {
+    console.error('[Cloud] 新增特权失败:', e)
+    return null
+  }
+}
 
 /**
  * 默认菜品数据（首次 seed 用 & H5 降级用）
@@ -988,7 +1414,11 @@ export async function fetchMenuItems(roomId) {
     const countRes = await db.collection('menu_items').where(query).count()
     const total = countRes.total
     if (total === 0) {
-      // 空集合，自动 seed
+      if (roomId) {
+        console.log('[Cloud] 当前房间菜单为空, roomId:', roomId)
+        return []
+      }
+      // 无房间上下文时才保留旧的默认 seed 行为，避免把空房间误填成默认菜单。
       console.log('[Cloud] 集合为空，开始 seed 默认数据...')
       await seedMenuData(roomId)
       return fetchMenuItems(roomId)
@@ -1183,6 +1613,87 @@ export async function deleteMenuItem(id, roomId) {
   }
 }
 
+async function deleteCollectionDocsByRoom(collectionName, roomId, { touchMenu = false } = {}) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return true
+  }
+
+  if (!roomId) {
+    console.warn('[Cloud] 缺少 roomId，无法批量删除', collectionName)
+    return false
+  }
+
+  try {
+    const db = getDB()
+    let removed = 0
+
+    while (true) {
+      const res = await db.collection(collectionName)
+        .where({ roomId })
+        .limit(20)
+        .get()
+
+      const docs = Array.isArray(res.data) ? res.data : []
+      if (docs.length === 0) break
+
+      await Promise.all(docs.map((doc) => db.collection(collectionName).doc(doc._id).remove()))
+      removed += docs.length
+
+      if (docs.length < 20) break
+    }
+
+    if (touchMenu) {
+      await touchRoomMenuVersion(roomId)
+    }
+
+    console.log('[Cloud] 批量删除成功:', collectionName, 'roomId:', roomId, 'removed:', removed)
+    return true
+  } catch (e) {
+    console.error('[Cloud] 批量删除失败:', collectionName, e)
+    return false
+  }
+}
+
+/**
+ * 删除当前房间全部菜品
+ * @param {string} roomId 房间号
+ * @returns {Promise<boolean>}
+ */
+export async function deleteMenuItemsByRoom(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    console.log('[Cloud] 非云环境，菜品仅清空本地')
+    return true
+  }
+
+  if (!roomId) {
+    console.warn('[Cloud] 缺少 roomId，无法清空房间菜品')
+    return false
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateMenuItem',
+      data: {
+        action: 'deleteByRoom',
+        roomId,
+      },
+    })
+    if (res.result && res.result.success) {
+      console.log('[Cloud] 云函数清空房间菜品成功, roomId:', roomId, 'removed:', res.result.removed)
+      return true
+    }
+    console.warn('[Cloud] 云函数清空房间菜品返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数清空房间菜品失败，尝试直接删除:', e.message || e)
+  }
+
+  return deleteCollectionDocsByRoom('menu_items', roomId, { touchMenu: true })
+}
+
 /**
  * 切换菜品上下架状态
  * @param {string} id 文档 _id
@@ -1371,6 +1882,47 @@ export async function fetchOrders(roomId) {
     console.error('[Cloud] 获取订单失败:', e)
     return null
   }
+}
+
+/**
+ * 删除当前房间全部订单
+ * @param {string} roomId 房间号
+ * @returns {Promise<boolean>}
+ */
+export async function deleteOrdersByRoom(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    console.log('[Cloud] 非云环境，订单仅清空本地')
+    return true
+  }
+
+  if (!roomId) {
+    console.warn('[Cloud] 缺少 roomId，无法清空房间订单')
+    return false
+  }
+
+  const ready = await ensureOrdersCollection()
+  if (!ready) return false
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateOrder',
+      data: {
+        action: 'deleteByRoom',
+        roomId,
+      },
+    })
+    if (res.result && res.result.success) {
+      console.log('[Cloud] 云函数清空房间订单成功, roomId:', roomId, 'removed:', res.result.removed)
+      return true
+    }
+    console.warn('[Cloud] 云函数清空房间订单返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数清空房间订单失败，尝试直接删除:', e.message || e)
+  }
+
+  return deleteCollectionDocsByRoom('orders', roomId)
 }
 
 /**

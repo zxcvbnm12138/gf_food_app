@@ -1,16 +1,24 @@
 import { reactive } from 'vue'
 import {
   fetchMenuItems as cloudFetchMenuItems,
+  fetchMenuCategories as cloudFetchMenuCategories,
+  addMenuCategory as cloudAddMenuCategory,
+  deleteMenuCategory as cloudDeleteMenuCategory,
+  fetchCustomCoupons as cloudFetchCustomCoupons,
+  addCustomCoupon as cloudAddCustomCoupon,
   addMenuItem as cloudAddMenuItem,
   updateMenuItem as cloudUpdateMenuItem,
   deleteMenuItem as cloudDeleteMenuItem,
   toggleMenuItemAvailability as cloudToggleAvailability,
   getDefaultMenuItems,
+  getDefaultMenuCategories,
   checkLogin as cloudCheckLogin,
   logout as cloudLogout,
   isCloudAvailable,
   addOrder as cloudAddOrder,
   fetchOrders as cloudFetchOrders,
+  deleteOrdersByRoom as cloudDeleteOrdersByRoom,
+  deleteMenuItemsByRoom as cloudDeleteMenuItemsByRoom,
   updateOrderInCloud,
   rushOrderInCloud,
   getStoredRoomId,
@@ -47,68 +55,29 @@ const menuRealtimeOwners = new Set()
 let chefOrdersPollTimer = null
 let chefOrdersPollInFlight = false
 const chefOrdersSyncOwners = new Set()
+const defaultMenuCategories = getDefaultMenuCategories()
 
 // 状态优先级：只允许前进，不允许回退
 const STATUS_PRIORITY = { pending: 0, accepted: 1, cooking: 2, done: 3 }
 const initialRoomId = getStoredRoomId()
 let ordersRoomId = initialRoomId
 
-const COUPON_DEFINITIONS = [
-  {
-    id: 1,
-    name: '15分钟肩颈按摩券',
-    desc: '累计投喂 20 次即可兑换',
-    emoji: '💆‍♀️',
-    color: '#FFF7E6',
-    required: 20,
+function normalizeCoupon(coupon) {
+  if (!coupon) return null
+  const name = String(coupon.name || '').trim()
+  const required = Math.max(0, Number(coupon.required) || 0)
+  if (!name || !required) return null
+  return {
+    id: coupon.id || `coupon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    name,
+    desc: coupon.desc || `累计投喂 ${required} 次即可兑换`,
+    emoji: String(coupon.emoji || '🎁').trim() || '🎁',
+    color: coupon.color || '#FFF1F0',
+    required,
     available: false,
-  },
-  {
-    id: 2,
-    name: '免跑腿代买券',
-    desc: '累计投喂 30 次即可兑换',
-    emoji: '🛍️',
-    color: '#F0F5FF',
-    required: 30,
-    available: false,
-  },
-  {
-    id: 3,
-    name: '指定电影陪看券',
-    desc: '累计投喂 50 次即可兑换',
-    emoji: '🎬',
-    color: '#F6FFED',
-    required: 50,
-    available: false,
-  },
-  {
-    id: 4,
-    name: '一周奶茶点单权',
-    desc: '累计投喂 80 次即可兑换',
-    emoji: '🧋',
-    color: '#E6FFFB',
-    required: 80,
-    available: false,
-  },
-  {
-    id: 5,
-    name: '周末一日陪玩券',
-    desc: '累计投喂 100 次即可兑换',
-    emoji: '🎮',
-    color: '#FFF1F0',
-    required: 100,
-    available: false,
-  },
-  {
-    id: 6,
-    name: '心愿菜单定制券',
-    desc: '累计投喂 150 次即可兑换',
-    emoji: '📝',
-    color: '#E8F3FF',
-    required: 150,
-    available: false,
-  },
-]
+    custom: coupon.custom === true,
+  }
+}
 
 let pendingMenuCategoryId = ''
 
@@ -348,14 +317,42 @@ function cloneCartItem(item) {
     image: item.image,
     price: item.price,
     qty: item.qty,
+    optionGroups: getMenuItemOptionGroups(item),
     options: {
       sweet: item.options?.sweet || '',
       extras: Array.isArray(item.options?.extras)
         ? [...item.options.extras]
         : (item.options?.extra ? [item.options.extra] : []),
+      groups: Array.isArray(item.options?.groups)
+        ? item.options.groups.map(group => ({
+          label: group.label || '',
+          values: Array.isArray(group.values) ? [...group.values] : [],
+        })).filter(group => group.label && group.values.length > 0)
+        : [],
       note: item.options?.note || '',
     },
   }
+}
+
+function buildSideCategories(categories) {
+  return [
+    { id: 'all', name: '全部菜品', active: true },
+    ...(Array.isArray(categories) ? categories : []).map(category => ({
+      id: category.id,
+      name: `${category.emoji ? category.emoji + ' ' : ''}${category.name}`,
+      emoji: category.emoji || '',
+      active: false,
+    })),
+  ]
+}
+
+function setStoreCategories(categories) {
+  const nextCategories = Array.isArray(categories) && categories.length > 0
+    ? categories
+    : getDefaultMenuCategories()
+
+  store.categories.splice(0, store.categories.length, ...nextCategories.map(category => ({ ...category })))
+  store.sideCategories.splice(0, store.sideCategories.length, ...buildSideCategories(nextCategories))
 }
 
 // 全局共享状态
@@ -381,24 +378,10 @@ const store = reactive({
   ordersLoaded: false,
 
   // 分类数据
-  categories: [
-    { id: 'hot', name: '热销', emoji: '🔥', color: '#FFF1F0' },
-    { id: 'dessert', name: '甜点', emoji: '🍰', color: '#FFF7E6' },
-    { id: 'drink', name: '饮品', emoji: '🥤', color: '#E6FFFB' },
-    { id: 'carb', name: '碳水', emoji: '🍜', color: '#F0F5FF' },
-    { id: 'light', name: '轻食', emoji: '🥗', color: '#F6FFED' },
-  ],
+  categories: defaultMenuCategories.map(category => ({ ...category })),
 
   // 侧栏分类（菜单页用）
-  sideCategories: [
-    { id: 'all', name: '全部菜品', active: true },
-    { id: 'hot', name: '🔥 热销', active: false },
-    { id: 'dessert', name: '🍰 甜点', active: false },
-    { id: 'drink', name: '🥤 饮品', active: false },
-    { id: 'carb', name: '🍜 面食', active: false },
-    { id: 'light', name: '🥗 轻食', active: false },
-    { id: 'warm', name: '🍵 暖饮', active: false },
-  ],
+  sideCategories: buildSideCategories(defaultMenuCategories),
 
   // 购物车数据
   cart: [],
@@ -432,8 +415,8 @@ const store = reactive({
     todayCompleted: 0,
   },
 
-  // 特权兑换券
-  coupons: COUPON_DEFINITIONS.map(coupon => ({ ...coupon })),
+  // 特权兑换券：只展示云端数据
+  coupons: [],
 
   // 订单备注
   cartNote: '',
@@ -459,6 +442,56 @@ export function refreshUserStats() {
     coupon.available = feedCount >= coupon.required
   })
   store.user.privileges = store.coupons.filter((coupon) => coupon.available).length
+}
+
+function setStoreCoupons(coupons) {
+  store.coupons.splice(0, store.coupons.length, ...(Array.isArray(coupons) ? coupons : []))
+  refreshUserStats()
+}
+
+export async function loadCustomCouponsFromCloud() {
+  const roomId = normalizeRoomId(store.roomId)
+  if (!roomId) {
+    setStoreCoupons([])
+    return store.coupons
+  }
+
+  const cloudCoupons = await cloudFetchCustomCoupons(roomId)
+  if (Array.isArray(cloudCoupons)) {
+    const normalizedCoupons = cloudCoupons
+      .map(coupon => normalizeCoupon({ ...coupon, custom: true }))
+      .filter(Boolean)
+    setStoreCoupons(normalizedCoupons)
+    return store.coupons
+  }
+
+  setStoreCoupons([])
+  return store.coupons
+}
+
+export async function addCustomCoupon(data) {
+  const coupon = normalizeCoupon({
+    ...data,
+    custom: true,
+  })
+  if (!coupon || !store.roomId) return null
+
+  const savedCoupon = await cloudAddCustomCoupon(coupon, store.roomId)
+  if (!savedCoupon) return null
+
+  const normalizedCoupon = normalizeCoupon({ ...savedCoupon, custom: true })
+  const cloudCoupons = [
+    ...store.coupons.filter(item => item.id !== normalizedCoupon.id),
+    normalizedCoupon,
+  ]
+  setStoreCoupons(cloudCoupons)
+
+  if (isCloudAvailable()) {
+    loadCustomCouponsFromCloud()
+  }
+
+  refreshUserStats()
+  return normalizedCoupon
 }
 
 // ========== 登录管理 ==========
@@ -531,6 +564,8 @@ export function setRoomId(roomId) {
     store.favoriteItemIds.splice(0, store.favoriteItemIds.length, ...readStoredFavorites(normalizedRoomId))
     store.menuItems = []
     store.menuLoaded = false
+    setStoreCategories(getDefaultMenuCategories())
+    setStoreCoupons([])
     replaceStoreOrders(readStoredOrders(normalizedRoomId), normalizedRoomId)
     store.ordersLoaded = false
     clearCart()
@@ -546,6 +581,7 @@ export function clearRoomId() {
   store.roomId = ''
   store.roomInfo = null
   store.favoriteItemIds.splice(0, store.favoriteItemIds.length)
+  setStoreCoupons([])
   replaceStoreOrders([], '')
   store.ordersLoaded = false
   clearCart()
@@ -566,6 +602,56 @@ export function consumePendingMenuCategory() {
   const categoryId = pendingMenuCategoryId
   pendingMenuCategoryId = ''
   return categoryId
+}
+
+// ========== 分类云端操作 ==========
+
+export async function loadMenuCategoriesFromCloud() {
+  try {
+    const categories = await cloudFetchMenuCategories(store.roomId)
+    setStoreCategories(categories)
+    return store.categories
+  } catch (e) {
+    console.warn('[Store] 加载分类失败:', e)
+    return store.categories
+  }
+}
+
+export async function addMenuCategoryToCloud(data) {
+  const category = await cloudAddMenuCategory(data, store.roomId)
+  if (!category) return null
+
+  await loadMenuCategoriesFromCloud()
+  let nextCategory = store.categories.find(item => item.id === category.id)
+  if (!nextCategory) {
+    setStoreCategories([...store.categories, category])
+    nextCategory = store.categories.find(item => item.id === category.id) || category
+  }
+  return nextCategory
+}
+
+export async function deleteMenuCategoryFromCloud(categoryId, fallbackCategoryId) {
+  categoryId = String(categoryId || '').trim()
+  fallbackCategoryId = String(fallbackCategoryId || '').trim()
+  if (!categoryId || categoryId === fallbackCategoryId) return false
+
+  const success = await cloudDeleteMenuCategory(categoryId, store.roomId, fallbackCategoryId)
+  if (!success) return false
+
+  const idx = store.categories.findIndex(item => item.id === categoryId)
+  if (idx !== -1) store.categories.splice(idx, 1)
+
+  if (fallbackCategoryId) {
+    store.menuItems.forEach((item) => {
+      if (item.category === categoryId) item.category = fallbackCategoryId
+    })
+  }
+
+  await Promise.all([
+    loadMenuCategoriesFromCloud(),
+    loadMenuFromCloud(),
+  ])
+  return true
 }
 
 // ========== 菜品云端操作 ==========
@@ -610,6 +696,15 @@ export async function loadMenuFromCloud() {
     console.error('[Store] 加载菜品失败:', e)
     return store.menuItems
   }
+}
+
+export async function getChefEntryUrl({ forceRefresh = false } = {}) {
+  if (!store.roomId) return '/pages/login/login'
+
+  const items = !forceRefresh && store.menuLoaded ? store.menuItems : await loadMenuFromCloud()
+  return Array.isArray(items) && items.length === 0
+    ? '/pages/chef/menu-init'
+    : '/pages/chef/dashboard'
 }
 
 /**
@@ -951,6 +1046,63 @@ export function clearRushNotifications() {
   store.rushNotifications.splice(0, store.rushNotifications.length)
 }
 
+// ========== 菜品自定义选项 ==========
+
+export function getMenuItemOptionGroups(item) {
+  if (!item) return []
+
+  if (Array.isArray(item.optionGroups) && item.optionGroups.length > 0) {
+    return item.optionGroups
+      .map((group, index) => ({
+        label: String(group.label || '').trim(),
+        options: Array.isArray(group.options)
+          ? group.options.map(option => String(option).trim()).filter(Boolean)
+          : [],
+        multiple: group.multiple === true || index > 0,
+      }))
+      .filter(group => group.label && group.options.length > 0)
+  }
+
+  const groups = []
+  if (Array.isArray(item.sweetOptions) && item.sweetOptions.length > 0) {
+    groups.push({
+      label: item.sweetLabel || '甜度',
+      options: item.sweetOptions,
+      multiple: false,
+    })
+  }
+  if (Array.isArray(item.extraOptions) && item.extraOptions.length > 0) {
+    groups.push({
+      label: item.extraLabel || '加料',
+      options: item.extraOptions,
+      multiple: true,
+    })
+  }
+  return groups
+}
+
+export function formatOrderItemOptions(item) {
+  const groups = Array.isArray(item?.options?.groups) ? item.options.groups : []
+  const groupParts = groups
+    .map(group => {
+      const label = String(group.label || '').trim()
+      const values = Array.isArray(group.values)
+        ? group.values.map(value => String(value).trim()).filter(Boolean)
+        : []
+      if (!values.length) return ''
+      return label ? `${label}: ${values.join('、')}` : values.join('、')
+    })
+    .filter(Boolean)
+
+  if (groupParts.length > 0) return groupParts.join(' / ')
+
+  const parts = []
+  if (item?.options?.sweet) parts.push(item.options.sweet)
+  if (item?.options?.extras?.length) parts.push(...item.options.extras)
+  if (item?.options?.extra) parts.push(item.options.extra)
+  return parts.join(' / ') || '默认口味'
+}
+
 // ========== 购物车操作 ==========
 
 export function addToCart(item, options = {}) {
@@ -1035,6 +1187,80 @@ export function clearOrders() {
   store.orders.splice(0, store.orders.length)
   persistCurrentRoomOrders()
   refreshUserStats()
+}
+
+function resetChefOrderStats() {
+  store.chef.totalOrders = 0
+  store.chef.todayOrders = 0
+  store.chef.todayCompleted = 0
+}
+
+function clearRushTimesForOrders(orders) {
+  const orderIds = new Set((Array.isArray(orders) ? orders : [])
+    .map(order => order?.id)
+    .filter(Boolean))
+  if (orderIds.size === 0) return
+
+  let changed = false
+  orderIds.forEach((orderId) => {
+    if (store.rushTimes[orderId]) {
+      delete store.rushTimes[orderId]
+      changed = true
+    }
+  })
+  if (changed) {
+    writeRushTimes(store.rushTimes)
+  }
+}
+
+export function clearCurrentRoomFavorites() {
+  store.favoriteItemIds.splice(0, store.favoriteItemIds.length)
+  writeStoredFavorites([], store.roomId)
+  refreshUserStats()
+}
+
+export async function clearCurrentRoomOrdersData({ clearFavorites = false } = {}) {
+  const roomId = normalizeRoomId(store.roomId)
+  if (!roomId) return false
+
+  ensureOrdersForCurrentRoom()
+  const currentOrders = [...store.orders]
+  const cloudSuccess = await cloudDeleteOrdersByRoom(roomId)
+  if (!cloudSuccess) return false
+
+  pendingOperations.clear()
+  clearRushTimesForOrders(currentOrders)
+  clearRushNotifications()
+  replaceStoreOrders([], roomId)
+  persistCurrentRoomOrders()
+  store.ordersLoaded = true
+  resetChefOrderStats()
+
+  if (clearFavorites) {
+    clearCurrentRoomFavorites()
+  } else {
+    refreshUserStats()
+  }
+
+  return true
+}
+
+export async function clearCurrentRoomAllData() {
+  const roomId = normalizeRoomId(store.roomId)
+  if (!roomId) return false
+
+  const ordersCleared = await clearCurrentRoomOrdersData({ clearFavorites: true })
+  if (!ordersCleared) return false
+
+  const menuCleared = await cloudDeleteMenuItemsByRoom(roomId)
+  if (menuCleared) {
+    stopAllMenuRealtimeSync()
+    store.menuItems = []
+    store.menuLoaded = true
+    clearCart()
+  }
+
+  return ordersCleared && menuCleared
 }
 
 export function updateUserAvatar(url) {

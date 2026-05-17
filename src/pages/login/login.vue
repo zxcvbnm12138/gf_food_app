@@ -242,7 +242,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { setRole, setLoginState, setRoomId, clearRoomId } from '@/store/index.js'
+import { setRole, setLoginState, setRoomId, clearRoomId, getChefEntryUrl } from '@/store/index.js'
 import {
   wxLogin, checkLogin,
   createRoom, joinRoom,
@@ -264,7 +264,7 @@ const historyRooms = ref([])
 const showHistoryRooms = ref(false)
 const isLoadingHistory = ref(false)
 const historyLoaded = ref(false)
-const isNewRoomFlow = ref(false)
+const isSelectingRole = ref(false)
 
 const loadRoomHints = async (openid) => {
   const storedRoom = getStoredRoomId()
@@ -332,7 +332,6 @@ const handleCreateRoom = async () => {
       createdRoomId.value = result.roomId
       currentRoomId.value = result.roomId
       setRoomId(result.roomId)
-      isNewRoomFlow.value = true
       showCreatedRoom.value = true
       step.value = -1 // 隐藏 step 1 内容
     } else {
@@ -363,7 +362,6 @@ const enterRoom = async (roomId) => {
     if (result.success) {
       currentRoomId.value = normalizeRoomId(result.roomInfo?.roomId || normalizedRoomId)
       setRoomId(currentRoomId.value)
-      isNewRoomFlow.value = false
       showHistoryRooms.value = false
       uni.showToast({ title: '加入成功 🎉', icon: 'none', duration: 1000 })
       setTimeout(() => { step.value = 2 }, 500)
@@ -417,20 +415,34 @@ const backToRoomStep = () => {
   showCreatedRoom.value = false
   currentRoomId.value = ''
   joinCode.value = ''
-  isNewRoomFlow.value = false
   clearRoomId()
   step.value = 1
 }
 
 // Step 2: 选择角色
-const selectRole = (role) => {
+const selectRole = async (role) => {
+  if (isSelectingRole.value) return
   setRole(role)
   if (role === 'customer') {
     uni.switchTab({ url: '/pages/index/index' })
-  } else if (isNewRoomFlow.value) {
-    uni.redirectTo({ url: '/pages/chef/menu-init' })
-  } else {
+    return
+  }
+
+  isSelectingRole.value = true
+  uni.showLoading({ title: '检查菜单...', mask: true })
+  try {
+    const url = await getChefEntryUrl({ forceRefresh: true })
+    if (url === '/pages/chef/menu-init') {
+      uni.redirectTo({ url })
+    } else {
+      uni.switchTab({ url })
+    }
+  } catch (e) {
+    console.warn('进入主厨端前检查菜单失败:', e)
     uni.switchTab({ url: '/pages/chef/dashboard' })
+  } finally {
+    uni.hideLoading()
+    isSelectingRole.value = false
   }
 }
 </script>

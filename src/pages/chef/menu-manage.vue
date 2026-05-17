@@ -18,20 +18,39 @@
           <view class="loading-spinner"></view>
           <text class="loading-text">加载菜品中...</text>
         </view>
-        <view v-for="(item, idx) in filteredItems" :key="item._id || item.id" class="menu-card" :style="{ animationDelay: (idx * 0.06) + 's' }" @click="openEdit(item)">
-          <view class="menu-img"><image class="menu-photo" :src="item.image" mode="aspectFill" /></view>
-          <view class="menu-info">
-            <view class="menu-top-row">
-              <text class="menu-name">{{ item.name }}</text>
-              <view class="avail-badge" :class="item.available !== false ? 'on' : 'off'">
-                <text class="avail-text">{{ item.available !== false ? '上架中' : '已下架' }}</text>
+        <view
+          v-for="(item, idx) in filteredItems"
+          :key="item._id || item.id"
+          class="menu-swipe-row"
+          :style="{ animationDelay: (idx * 0.06) + 's' }"
+          @touchstart="startSwipe(item, $event)"
+          @touchmove="moveSwipe(item, $event)"
+          @touchend="endSwipe(item, $event)"
+          @touchcancel="endSwipe(item, $event)"
+        >
+          <view class="menu-delete-action" @click.stop="confirmSwipeDelete(item)">
+            <text class="menu-delete-icon">−</text>
+            <text class="menu-delete-text">删除</text>
+          </view>
+          <view
+            class="menu-card"
+            :class="{ swiped: isItemSwiped(item) }"
+            @click="handleCardClick(item)"
+          >
+            <view class="menu-img"><image class="menu-photo" :src="item.image" mode="aspectFill" /></view>
+            <view class="menu-info">
+              <view class="menu-top-row">
+                <text class="menu-name">{{ item.name }}</text>
+                <view class="avail-badge" :class="item.available !== false ? 'on' : 'off'">
+                  <text class="avail-text">{{ item.available !== false ? '上架中' : '已下架' }}</text>
+                </view>
               </view>
-            </view>
-            <text class="menu-desc">{{ item.desc }}</text>
-            <view class="menu-bottom">
-              <text class="menu-cat">{{ getCatName(item.category) }}</text>
-              <view class="switch-hit-area" @click.stop @tap.stop>
-                <switch class="menu-switch" :checked="item.available !== false" @change="toggleAvail(item, $event)" color="#4080FF" />
+              <text class="menu-desc">{{ item.desc }}</text>
+              <view class="menu-bottom">
+                <text class="menu-cat">{{ getCatName(item.category) }}</text>
+                <view class="switch-hit-area" @click.stop @tap.stop>
+                  <switch class="menu-switch" :checked="item.available !== false" @change="toggleAvail(item, $event)" color="#4080FF" />
+                </view>
               </view>
             </view>
           </view>
@@ -77,16 +96,38 @@
               <view v-for="cat in catOptions" :key="cat.id"
                 class="cat-chip"
                 :class="{ active: editForm.category === cat.id }"
-                @click="editForm.category = cat.id">
+                @click="selectCategory(cat)">
                 <text class="cat-chip-text">{{ cat.label }}</text>
+                <view v-if="isDeletingCategories" class="cat-delete-mark" @click.stop="confirmDeleteCategory(cat)">
+                  <text class="cat-delete-text">−</text>
+                </view>
+              </view>
+              <view class="cat-chip add-cat-chip" @click="toggleCategoryCreator">
+                <text class="cat-chip-text add">+ 增加分类</text>
+              </view>
+              <view class="cat-chip delete-cat-chip" :class="{ active: isDeletingCategories }" @click="toggleCategoryDeleteMode">
+                <text class="cat-chip-text delete">{{ isDeletingCategories ? '完成删除' : '删除分类' }}</text>
               </view>
             </view>
-          </view>
 
-          <!-- Emoji -->
-          <view class="edit-field">
-            <text class="edit-label">图标 Emoji</text>
-            <input class="edit-input" v-model="editForm.emoji" placeholder="输入一个emoji，如 🍓" maxlength="4" />
+            <view v-if="showCategoryCreator" class="category-creator">
+              <input class="edit-input" v-model="newCategoryName" placeholder="分类名称，如 下饭菜" maxlength="12" />
+              <text class="edit-label small">选择分类图标</text>
+              <view class="emoji-picker">
+                <view
+                  v-for="emoji in categoryEmojiOptions"
+                  :key="emoji"
+                  class="emoji-chip"
+                  :class="{ active: newCategoryEmoji === emoji }"
+                  @click="newCategoryEmoji = emoji"
+                >
+                  <text class="emoji-chip-text">{{ emoji }}</text>
+                </view>
+              </view>
+              <view class="create-category-btn" :class="{ disabled: isCreatingCategory }" @click="createCategory">
+                <text class="create-category-text">{{ isCreatingCategory ? '添加中...' : '保存分类' }}</text>
+              </view>
+            </view>
           </view>
 
           <!-- 图片上传 -->
@@ -126,22 +167,22 @@
             <input class="edit-input" v-model="editForm.price" placeholder="免费" />
           </view>
 
-          <!-- 甜度选项 -->
-          <view class="edit-field">
-            <text class="edit-label">甜度选项（逗号分隔）</text>
-            <input class="edit-input" v-model="editForm.sweetOptionsStr" placeholder="少少糖,正常甜，也可用中文逗号" />
-          </view>
-
-          <!-- 加料选项 -->
-          <view class="edit-field">
-            <text class="edit-label">加料选项（逗号分隔）</text>
-            <input class="edit-input" v-model="editForm.extraOptionsStr" placeholder="多放草莓,加奶油，也可用中文逗号" />
-          </view>
-
           <!-- 排序 -->
           <view class="edit-field">
             <text class="edit-label">排序权重</text>
             <input class="edit-input" v-model="editForm.sortOrder" type="number" placeholder="1" />
+          </view>
+
+          <view class="edit-field">
+            <text class="edit-label">自定义选项一</text>
+            <input class="edit-input" v-model="editForm.optionGroup1Label" placeholder="选项名称，如 甜度 / 辣度 / 冰度" maxlength="12" />
+            <input class="edit-input" v-model="editForm.optionGroup1OptionsStr" placeholder="选项内容，如 微辣,中辣,特辣" />
+          </view>
+
+          <view class="edit-field">
+            <text class="edit-label">自定义选项二</text>
+            <input class="edit-input" v-model="editForm.optionGroup2Label" placeholder="选项名称，如 加料 / 份量 / 做法" maxlength="12" />
+            <input class="edit-input" v-model="editForm.optionGroup2OptionsStr" placeholder="选项内容，如 加蛋,加肉,不要葱" />
           </view>
         </scroll-view>
 
@@ -173,6 +214,10 @@ import store, {
   deleteMenuItemFromCloud,
   toggleItemAvailability,
   uploadImageToCloud,
+  loadMenuCategoriesFromCloud,
+  addMenuCategoryToCloud,
+  deleteMenuCategoryFromCloud,
+  getMenuItemOptionGroups,
 } from '@/store/index.js'
 import { isCloudAvailable } from '@/services/cloud.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
@@ -183,6 +228,18 @@ const isNewItem = ref(false)
 const isSaving = ref(false)
 const isLoading = ref(false)
 const isUploading = ref(false)
+const isCreatingCategory = ref(false)
+const showCategoryCreator = ref(false)
+const isDeletingCategories = ref(false)
+const newCategoryName = ref('')
+const newCategoryEmoji = ref('🍽️')
+const categoryEmojiOptions = ['🔥', '🍰', '🥤', '🍜', '🥗', '🍵', '🍚', '🥩', '🌶️', '🍲', '🍱', '🍽️']
+const swipedItemId = ref('')
+let swipeItemId = ''
+let swipeStartX = 0
+let swipeStartY = 0
+let swipeLastX = 0
+let swipeLastY = 0
 
 const editForm = ref({
   _id: '',
@@ -195,9 +252,11 @@ const editForm = ref({
   imagePreview: '',
   available: true,
   price: '免费',
-  sweetOptionsStr: '',
-  extraOptionsStr: '',
   sortOrder: 1,
+  optionGroup1Label: '甜度',
+  optionGroup1OptionsStr: '',
+  optionGroup2Label: '加料',
+  optionGroup2OptionsStr: '',
 })
 
 const menuItems = computed(() => store.menuItems)
@@ -208,30 +267,105 @@ const filteredItems = computed(() => {
   return menuItems.value.filter(i => i.name.toLowerCase().includes(kw) || i.desc.toLowerCase().includes(kw))
 })
 
-const catOptions = [
-  { id: 'hot', label: '🔥 热销' },
-  { id: 'dessert', label: '🍰 甜点' },
-  { id: 'drink', label: '🥤 饮品' },
-  { id: 'carb', label: '🍜 面食' },
-  { id: 'light', label: '🥗 轻食' },
-  { id: 'warm', label: '🍵 暖饮' },
-]
+const catOptions = computed(() => store.categories.map(cat => ({
+  id: cat.id,
+  label: `${cat.emoji ? cat.emoji + ' ' : ''}${cat.name}`,
+  emoji: cat.emoji || '🍽️',
+})))
 
-const catMap = { hot: '🔥 热销', dessert: '🍰 甜点', drink: '🥤 饮品', carb: '🍜 面食', light: '🥗 轻食', warm: '🍵 暖饮' }
-const getCatName = (cat) => catMap[cat] || cat
+const getCatName = (cat) => {
+  const target = store.categories.find(item => item.id === cat)
+  return target ? `${target.emoji ? target.emoji + ' ' : ''}${target.name}` : cat
+}
+const getCatEmoji = (cat) => store.categories.find(item => item.id === cat)?.emoji || '🍽️'
+const getItemKey = (item) => String(item?._id || item?.id || '')
+const isItemSwiped = (item) => swipedItemId.value === getItemKey(item)
+
+const startSwipe = (item, event) => {
+  const touch = event.touches?.[0]
+  if (!touch) return
+  swipeItemId = getItemKey(item)
+  swipeStartX = touch.clientX
+  swipeStartY = touch.clientY
+  swipeLastX = touch.clientX
+  swipeLastY = touch.clientY
+}
+
+const moveSwipe = (item, event) => {
+  const touch = event.touches?.[0]
+  if (!touch || swipeItemId !== getItemKey(item)) return
+  swipeLastX = touch.clientX
+  swipeLastY = touch.clientY
+}
+
+const endSwipe = (item, event) => {
+  const touch = event.changedTouches?.[0]
+  if (touch) {
+    swipeLastX = touch.clientX
+    swipeLastY = touch.clientY
+  }
+  const itemId = getItemKey(item)
+  if (!itemId || swipeItemId !== itemId) return
+
+  const deltaX = swipeLastX - swipeStartX
+  const deltaY = swipeLastY - swipeStartY
+  if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX < -40) {
+    swipedItemId.value = itemId
+  } else if (deltaX > 20 || Math.abs(deltaY) > Math.abs(deltaX)) {
+    swipedItemId.value = ''
+  }
+  swipeItemId = ''
+}
+
+const handleCardClick = (item) => {
+  if (swipedItemId.value) {
+    swipedItemId.value = ''
+    return
+  }
+  openEdit(item)
+}
+
 const parseOptionList = (value) => (
   value
     ? value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
     : []
 )
 
+const buildOptionGroups = (form) => {
+  const rawGroups = [
+    {
+      label: form.optionGroup1Label.trim(),
+      options: parseOptionList(form.optionGroup1OptionsStr),
+      multiple: false,
+    },
+    {
+      label: form.optionGroup2Label.trim(),
+      options: parseOptionList(form.optionGroup2OptionsStr),
+      multiple: true,
+    },
+  ]
+
+  return rawGroups.filter(group => group.label && group.options.length > 0)
+}
+
+const toFormOptionGroups = (item) => {
+  const groups = getMenuItemOptionGroups(item)
+  return {
+    optionGroup1Label: groups[0]?.label || '甜度',
+    optionGroup1OptionsStr: groups[0]?.options?.join(',') || '',
+    optionGroup2Label: groups[1]?.label || '加料',
+    optionGroup2OptionsStr: groups[1]?.options?.join(',') || '',
+  }
+}
+
 // 加载菜品
 onMounted(async () => {
-  if (!store.menuLoaded) {
-    isLoading.value = true
-    await loadMenuFromCloud()
-    isLoading.value = false
-  }
+  isLoading.value = true
+  await Promise.all([
+    store.menuLoaded ? Promise.resolve() : loadMenuFromCloud(),
+    loadMenuCategoriesFromCloud(),
+  ])
+  isLoading.value = false
 })
 
 // 切换上下架
@@ -249,20 +383,24 @@ const toggleAvail = async (item, event) => {
 // 打开新增
 const openAdd = () => {
   isNewItem.value = true
+  showCategoryCreator.value = false
+  isDeletingCategories.value = false
+  swipedItemId.value = ''
   editForm.value = {
     _id: '',
     name: '',
     desc: '',
     fullDesc: '',
-    category: 'hot',
-    emoji: '🍽️',
+    category: catOptions.value[0]?.id || 'hot',
     image: '',
     imagePreview: '',
     available: true,
     price: '免费',
-    sweetOptionsStr: '',
-    extraOptionsStr: '',
     sortOrder: menuItems.value.length + 1,
+    optionGroup1Label: '甜度',
+    optionGroup1OptionsStr: '',
+    optionGroup2Label: '加料',
+    optionGroup2OptionsStr: '',
   }
   showEdit.value = true
 }
@@ -270,20 +408,22 @@ const openAdd = () => {
 // 打开编辑
 const openEdit = (item) => {
   isNewItem.value = false
+  showCategoryCreator.value = false
+  isDeletingCategories.value = false
+  swipedItemId.value = ''
+  const optionForm = toFormOptionGroups(item)
   editForm.value = {
     _id: item._id || item.id,
     name: item.name,
     desc: item.desc,
     fullDesc: item.fullDesc || '',
     category: item.category,
-    emoji: item.emoji || '',
     image: item._cloudImageId || item.image || '',
     imagePreview: item.image || item._cloudImageId || '',
     available: item.available !== false,
     price: item.price || '免费',
-    sweetOptionsStr: (item.sweetOptions || []).join(','),
-    extraOptionsStr: (item.extraOptions || []).join(','),
     sortOrder: item.sortOrder || 1,
+    ...optionForm,
   }
   showEdit.value = true
 }
@@ -306,17 +446,23 @@ const saveEdit = async () => {
     return
   }
 
+  const optionGroups = buildOptionGroups(form)
+  const primaryGroup = optionGroups[0]
+  const secondaryGroup = optionGroups[1]
   const data = {
     name: form.name.trim(),
     desc: form.desc.trim(),
     fullDesc: form.fullDesc.trim(),
     category: form.category,
-    emoji: form.emoji,
+    emoji: getCatEmoji(form.category),
     image: form.image,
     price: form.price || '免费',
     available: isNewItem.value ? true : form.available !== false,
-    sweetOptions: parseOptionList(form.sweetOptionsStr),
-    extraOptions: parseOptionList(form.extraOptionsStr),
+    optionGroups,
+    sweetLabel: primaryGroup?.label || '',
+    sweetOptions: primaryGroup?.options || [],
+    extraLabel: secondaryGroup?.label || '',
+    extraOptions: secondaryGroup?.options || [],
     sortOrder: parseInt(form.sortOrder) || 1,
   }
 
@@ -360,26 +506,30 @@ const saveEdit = async () => {
   }
 }
 
-// 确认删除
-const confirmDelete = () => {
+const deleteMenuItemWithConfirm = (itemId, itemName, { closeEdit = false } = {}) => {
   uni.showModal({
     title: '⚠️ 确认删除',
-    content: `确定要删除「${editForm.value.name}」吗？此操作不可恢复！`,
+    content: `确定要删除「${itemName}」吗？此操作不可恢复！`,
     confirmColor: '#FF4D4F',
     success: async (res) => {
       if (res.confirm) {
         isSaving.value = true
         try {
-          const success = await deleteMenuItemFromCloud(editForm.value._id)
+          const success = await deleteMenuItemFromCloud(itemId)
+          let removed = success
           if (success) {
             uni.showToast({ title: '已删除 🗑️', icon: 'none' })
-          } else {
+          } else if (!isCloudAvailable()) {
             // H5 降级
-            const idx = store.menuItems.findIndex(m => (m._id || m.id) === editForm.value._id)
+            const idx = store.menuItems.findIndex(m => String(m._id || m.id) === String(itemId))
             if (idx !== -1) store.menuItems.splice(idx, 1)
+            removed = idx !== -1
             uni.showToast({ title: '已删除（本地）🗑️', icon: 'none' })
+          } else {
+            uni.showToast({ title: '删除失败，请检查云函数', icon: 'none' })
           }
-          showEdit.value = false
+          swipedItemId.value = ''
+          if (closeEdit && removed) showEdit.value = false
         } catch (e) {
           uni.showToast({ title: '删除失败', icon: 'none' })
         } finally {
@@ -390,7 +540,104 @@ const confirmDelete = () => {
   })
 }
 
+// 确认删除
+const confirmDelete = () => {
+  deleteMenuItemWithConfirm(editForm.value._id, editForm.value.name, { closeEdit: true })
+}
+
+const confirmSwipeDelete = (item) => {
+  deleteMenuItemWithConfirm(getItemKey(item), item.name)
+}
+
 const onScrollBottom = () => { /* future: pagination */ }
+
+const selectCategory = (cat) => {
+  if (isDeletingCategories.value) return
+  editForm.value.category = cat.id
+}
+
+const toggleCategoryCreator = () => {
+  isDeletingCategories.value = false
+  showCategoryCreator.value = !showCategoryCreator.value
+}
+
+const toggleCategoryDeleteMode = () => {
+  showCategoryCreator.value = false
+  isDeletingCategories.value = !isDeletingCategories.value
+}
+
+const confirmDeleteCategory = (cat) => {
+  if (isCreatingCategory.value) return
+  if (store.categories.length <= 1) {
+    uni.showToast({ title: '至少保留一个分类', icon: 'none' })
+    return
+  }
+
+  const fallback = store.categories.find(item => item.id !== cat.id)
+  if (!fallback) {
+    uni.showToast({ title: '没有可承接菜品的分类', icon: 'none' })
+    return
+  }
+
+  uni.showModal({
+    title: '确认删除分类吗',
+    content: `删除「${cat.label}」后，该分类下菜品会移到「${getCatName(fallback.id)}」。`,
+    confirmColor: '#FF4D4F',
+    success: async (res) => {
+      if (!res.confirm) return
+
+      uni.showLoading({ title: '删除中...', mask: true })
+      try {
+        const success = await deleteMenuCategoryFromCloud(cat.id, fallback.id)
+        uni.hideLoading()
+        if (success) {
+          if (editForm.value.category === cat.id) {
+            editForm.value.category = fallback.id
+          }
+          uni.showToast({ title: '分类已删除', icon: 'none' })
+        } else {
+          uni.showToast({ title: '删除失败，请检查云函数', icon: 'none' })
+        }
+      } catch (e) {
+        uni.hideLoading()
+        console.warn('[ChefMenu] 删除分类失败', e)
+        uni.showToast({ title: '删除分类失败，请重试', icon: 'none' })
+      }
+    },
+  })
+}
+
+const createCategory = async () => {
+  if (isCreatingCategory.value) return
+  const name = newCategoryName.value.trim()
+  if (!name) {
+    uni.showToast({ title: '请输入分类名称', icon: 'none' })
+    return
+  }
+
+  isCreatingCategory.value = true
+  try {
+    const category = await addMenuCategoryToCloud({
+      name,
+      emoji: newCategoryEmoji.value,
+      sortOrder: store.categories.length + 1,
+    })
+    if (category) {
+      editForm.value.category = category.id
+      newCategoryName.value = ''
+      newCategoryEmoji.value = '🍽️'
+      showCategoryCreator.value = false
+      uni.showToast({ title: '分类已添加', icon: 'none' })
+    } else {
+      uni.showToast({ title: '添加失败，请重新部署云函数', icon: 'none' })
+    }
+  } catch (e) {
+    console.warn('[ChefMenu] 新增分类失败', e)
+    uni.showToast({ title: '添加分类失败，请稍后重试', icon: 'none' })
+  } finally {
+    isCreatingCategory.value = false
+  }
+}
 
 // 选择图片并上传到云端
 const chooseAndUploadImage = () => {
@@ -456,8 +703,14 @@ const chooseAndUploadImage = () => {
 .loading-spinner { width: 48rpx; height: 48rpx; border: 6rpx solid #E5E6EB; border-top-color: #4080FF; border-radius: 50%; animation: spin 0.8s linear infinite; }
 .loading-text { font-size: 26rpx; color: #86909C; }
 
-.menu-card { display: flex; gap: 24rpx; background: #FFFFFF; border-radius: 28rpx; padding: 28rpx; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.04); animation: fadeInUp 0.4s ease both; transition: transform 0.2s ease; }
+.menu-swipe-row { position: relative; overflow: hidden; border-radius: 28rpx; animation: fadeInUp 0.4s ease both; }
+.menu-delete-action { position: absolute; top: 0; right: 0; bottom: 0; width: 148rpx; background: #FF4D4F; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6rpx; }
+.menu-delete-icon { width: 34rpx; height: 34rpx; border-radius: 17rpx; background: rgba(255,255,255,0.22); color: #FFFFFF; font-size: 34rpx; line-height: 28rpx; text-align: center; font-weight: bold; }
+.menu-delete-text { font-size: 24rpx; color: #FFFFFF; font-weight: bold; }
+.menu-card { position: relative; z-index: 1; display: flex; gap: 24rpx; background: #FFFFFF; border-radius: 28rpx; padding: 28rpx; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.04); transition: transform 0.2s ease; box-sizing: border-box; }
+.menu-card.swiped { transform: translateX(-148rpx); }
 .menu-card:active { transform: scale(0.98); }
+.menu-card.swiped:active { transform: translateX(-148rpx); }
 .menu-img { width: 140rpx; height: 140rpx; border-radius: 20rpx; overflow: hidden; flex-shrink: 0; background: #FFF7E6; }
 .menu-photo { width: 100%; height: 100%; }
 .menu-info { flex: 1; display: flex; flex-direction: column; justify-content: space-between; min-height: 140rpx; }
@@ -501,7 +754,7 @@ const chooseAndUploadImage = () => {
 
 /* 编辑弹窗 */
 .edit-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; animation: fadeIn 0.25s ease; }
-.edit-card { width: 680rpx; max-height: 80vh; background: #FFFFFF; border-radius: 32rpx; padding: 40rpx 36rpx 32rpx; display: flex; flex-direction: column; gap: 20rpx; animation: bounceIn 0.5s ease; }
+.edit-card { width: 680rpx; max-height: 80vh; background: #FFFFFF; border-radius: 32rpx; padding: 40rpx 36rpx 32rpx; display: flex; flex-direction: column; gap: 20rpx; animation: bounceIn 0.5s ease; box-sizing: border-box; }
 .edit-title { font-size: 34rpx; font-weight: bold; color: #1D2129; text-align: center; }
 .edit-scroll { max-height: 50vh; overflow: hidden; }
 .edit-item-head { display: flex; align-items: center; gap: 24rpx; }
@@ -511,15 +764,32 @@ const chooseAndUploadImage = () => {
 .edit-cat { font-size: 22rpx; color: #86909C; }
 .edit-field { display: flex; flex-direction: column; gap: 10rpx; margin-bottom: 20rpx; }
 .edit-label { font-size: 24rpx; font-weight: bold; color: #4E5969; }
-.edit-input { width: 100%; height: 72rpx; font-size: 26rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 0 20rpx; }
-.edit-textarea { width: 100%; font-size: 24rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 20rpx; min-height: 100rpx; line-height: 1.6; }
+.edit-label.small { font-size: 22rpx; color: #86909C; margin-top: 4rpx; }
+.edit-input { width: 100%; height: 72rpx; font-size: 26rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 0 20rpx; box-sizing: border-box; }
+.edit-textarea { width: 100%; font-size: 24rpx; color: #1D2129; background: #F7F8FA; border-radius: 16rpx; padding: 20rpx; min-height: 100rpx; line-height: 1.6; box-sizing: border-box; }
 
 /* 分类选择器 */
 .cat-picker { display: flex; flex-wrap: wrap; gap: 12rpx; }
-.cat-chip { padding: 10rpx 24rpx; border-radius: 24rpx; background: #F2F3F5; transition: all 0.2s ease; }
+.cat-chip { position: relative; padding: 10rpx 24rpx; border-radius: 24rpx; background: #F2F3F5; transition: all 0.2s ease; }
 .cat-chip.active { background: #E8F3FF; }
+.cat-chip.add-cat-chip { background: #FFF7E6; }
+.cat-chip.delete-cat-chip { background: #FFF1F0; }
+.cat-chip.delete-cat-chip.active { background: #FF4D4F; }
 .cat-chip-text { font-size: 22rpx; color: #4E5969; }
+.cat-chip-text.add { color: #FA8C16; font-weight: bold; }
+.cat-chip-text.delete { color: #FF4D4F; font-weight: bold; }
+.cat-chip.delete-cat-chip.active .cat-chip-text.delete { color: #FFFFFF; }
 .cat-chip.active .cat-chip-text { color: #4080FF; font-weight: bold; }
+.cat-delete-mark { position: absolute; top: -10rpx; right: -8rpx; width: 32rpx; height: 32rpx; border-radius: 16rpx; background: #FF4D4F; border: 4rpx solid #FFFFFF; display: flex; align-items: center; justify-content: center; box-shadow: 0 4rpx 10rpx rgba(255,77,79,0.28); }
+.cat-delete-text { color: #FFFFFF; font-size: 30rpx; line-height: 24rpx; font-weight: bold; }
+.category-creator { margin-top: 16rpx; padding: 20rpx; border-radius: 20rpx; background: #F7F8FA; display: flex; flex-direction: column; gap: 16rpx; box-sizing: border-box; }
+.emoji-picker { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.emoji-chip { width: 64rpx; height: 64rpx; border-radius: 18rpx; background: #FFFFFF; display: flex; align-items: center; justify-content: center; border: 2rpx solid transparent; transition: all 0.2s ease; }
+.emoji-chip.active { border-color: #4080FF; background: #E8F3FF; transform: scale(1.04); }
+.emoji-chip-text { font-size: 32rpx; }
+.create-category-btn { height: 72rpx; border-radius: 36rpx; background: #4080FF; display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease; }
+.create-category-btn.disabled { opacity: 0.6; }
+.create-category-text { font-size: 26rpx; color: #FFFFFF; font-weight: bold; }
 
 .edit-options { font-size: 24rpx; color: #86909C; line-height: 1.6; }
 .edit-actions { display: flex; gap: 16rpx; margin-top: 8rpx; }
@@ -546,6 +816,7 @@ const chooseAndUploadImage = () => {
   align-items: center;
   justify-content: center;
   transition: all 0.2s ease;
+  box-sizing: border-box;
 }
 .image-upload-area:active {
   transform: scale(0.98);

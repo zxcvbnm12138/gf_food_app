@@ -55,7 +55,7 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, loadOrdersFromCloud } from '@/store/index.js'
+import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, loadOrdersFromCloud, formatOrderItemOptions } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const activeTab = ref(0)
 
@@ -118,7 +118,7 @@ const statusClass = computed(() => {
 const emptyEmoji = computed(() => ['📥','🍳','📋'][activeTab.value])
 const emptyText = computed(() => ['暂无待接单订单～','暂无制作中订单～','暂无已完成订单～'][activeTab.value])
 const fmtTime = (iso) => { if (!iso) return '--:--'; const d = new Date(iso); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` }
-const getOptsText = (item) => { const p = []; if (item.options?.sweet) p.push(item.options.sweet); if (item.options?.extras?.length) p.push(...item.options.extras); return p.join(' / ') || '默认口味' }
+const getOptsText = (item) => formatOrderItemOptions(item)
 const isOperating = ref(false)
 
 const doAccept = async (id) => {

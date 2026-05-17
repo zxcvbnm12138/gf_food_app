@@ -108,7 +108,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import store, { updateCartQty, removeFromCart, getCartTotal, createOrderFromCart } from '@/store/index.js'
+import store, { updateCartQty, removeFromCart, getCartTotal, createOrderFromCart, formatOrderItemOptions } from '@/store/index.js'
 
 const showOrderSuccess = ref(false)
 const progressWidth = ref(0)
@@ -117,11 +117,7 @@ const cartItems = computed(() => store.cart)
 const totalCount = computed(() => getCartTotal())
 
 const getOptionsText = (item) => {
-  const parts = []
-  if (item.options?.sweet) parts.push(item.options.sweet)
-  if (item.options?.extras?.length) parts.push(...item.options.extras)
-  if (item.options?.extra) parts.push(item.options.extra)
-  return parts.join(' / ') || '默认口味'
+  return formatOrderItemOptions(item)
 }
 
 const updateQty = (index, delta) => {
