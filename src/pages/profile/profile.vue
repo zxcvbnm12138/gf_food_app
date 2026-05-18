@@ -91,7 +91,7 @@
           <view class="pref-row">
             <text class="pref-label">绝对不吃 🚫</text>
             <view class="pref-tags">
-              <view v-for="(tag, i) in user.dislikes" :key="i" class="pref-tag">
+              <view v-for="(tag, i) in user.dislikes" :key="i" class="pref-tag" @click="removeDislike(tag)">
                 <text class="pref-tag-text">{{ tag }}</text>
               </view>
               <view class="pref-tag add" @click="addDislike">
@@ -103,7 +103,7 @@
           <view class="pref-row">
             <text class="pref-label">过敏提醒 ⚠️</text>
             <view class="pref-tags">
-              <view v-for="(tag, i) in allergyTags" :key="i" class="pref-tag warning">
+              <view v-for="(tag, i) in allergyTags" :key="i" class="pref-tag warning" @click="removeAllergy(tag)">
                 <text class="pref-tag-text warning">{{ tag }}</text>
               </view>
               <view class="pref-tag add" @click="addAllergy">
@@ -393,6 +393,38 @@ const addDislike = () => {
   })
 }
 
+const removeDislike = (tag) => {
+  uni.showModal({
+    title: '删除绝对不吃',
+    content: `确定要删除“${tag}”吗？`,
+    confirmText: '删除',
+    confirmColor: '#FF4D4F',
+    success: async (res) => {
+      if (!res.confirm) return
+
+      const current = Array.isArray(store.user.dislikes) ? [...store.user.dislikes] : []
+      const nextDislikes = current.filter(item => item !== tag)
+      if (nextDislikes.length === current.length) return
+
+      uni.showLoading({ title: '删除中...', mask: true })
+      try {
+        const saved = await saveCurrentRoomUserPreferences({
+          dislikes: nextDislikes,
+          allergies: allergyTags.value,
+        })
+        uni.hideLoading()
+        uni.showToast({
+          title: saved ? '已删除' : '删除失败，请重试',
+          icon: 'none'
+        })
+      } catch (e) {
+        uni.hideLoading()
+        uni.showToast({ title: '删除失败，请重试', icon: 'none' })
+      }
+    }
+  })
+}
+
 const addAllergy = () => {
   uni.showModal({
     title: '添加过敏源',
@@ -416,6 +448,38 @@ const addAllergy = () => {
         uni.showToast({ title: '已保存 ✅', icon: 'none' })
       } else {
         uni.showToast({ title: '保存失败，请重试', icon: 'none' })
+      }
+    }
+  })
+}
+
+const removeAllergy = (tag) => {
+  uni.showModal({
+    title: '删除过敏提醒',
+    content: `确定要删除“${tag}”吗？`,
+    confirmText: '删除',
+    confirmColor: '#FF4D4F',
+    success: async (res) => {
+      if (!res.confirm) return
+
+      const current = allergyTags.value
+      const nextAllergies = current.filter(item => item !== tag)
+      if (nextAllergies.length === current.length) return
+
+      uni.showLoading({ title: '删除中...', mask: true })
+      try {
+        const saved = await saveCurrentRoomUserPreferences({
+          dislikes: store.user.dislikes,
+          allergies: nextAllergies,
+        })
+        uni.hideLoading()
+        uni.showToast({
+          title: saved ? '已删除' : '删除失败，请重试',
+          icon: 'none'
+        })
+      } catch (e) {
+        uni.hideLoading()
+        uni.showToast({ title: '删除失败，请重试', icon: 'none' })
       }
     }
   })
@@ -549,6 +613,7 @@ const doLogout = () => {
 
 .avatar-area {
   position: relative;
+  margin-top: 32rpx;
 }
 
 .avatar-button {

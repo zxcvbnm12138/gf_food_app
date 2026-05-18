@@ -93,6 +93,7 @@ function normalizeCoupon(coupon) {
 }
 
 let pendingMenuCategoryId = ''
+let pendingMenuSearchFocus = false
 
 function normalizeOrderRoomId(order) {
   return normalizeRoomId(order?.roomId || order?._roomId || '')
@@ -733,6 +734,16 @@ export function consumePendingMenuCategory() {
   const categoryId = pendingMenuCategoryId
   pendingMenuCategoryId = ''
   return categoryId
+}
+
+export function requestPendingMenuSearchFocus() {
+  pendingMenuSearchFocus = true
+}
+
+export function consumePendingMenuSearchFocus() {
+  const shouldFocus = pendingMenuSearchFocus
+  pendingMenuSearchFocus = false
+  return shouldFocus
 }
 
 // ========== 分类云端操作 ==========

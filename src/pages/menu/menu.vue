@@ -15,7 +15,7 @@
           class="search-input"
           v-model="searchText"
           placeholder="搜索美食..."
-          focus
+          :focus="searchInputFocus"
           @blur="onSearchBlur"
         />
         <text v-else class="search-placeholder">想吃点什么？</text>
@@ -96,7 +96,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import store, {
   addToCart,
@@ -108,10 +108,12 @@ import store, {
   startMenuRealtimeSync,
   stopMenuRealtimeSync,
   consumePendingMenuCategory,
+  consumePendingMenuSearchFocus,
 } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const searchActive = ref(false)
+const searchInputFocus = ref(false)
 const searchText = ref('')
 const activeCatIndex = ref(0)
 const showAddToast = ref(false)
@@ -153,6 +155,20 @@ const applyPendingCategory = () => {
   }
 }
 
+const focusSearchInput = () => {
+  searchActive.value = true
+  searchInputFocus.value = false
+  nextTick(() => {
+    searchInputFocus.value = true
+  })
+}
+
+const applyPendingSearchFocus = () => {
+  if (consumePendingMenuSearchFocus()) {
+    setTimeout(focusSearchInput, 80)
+  }
+}
+
 onLoad((options = {}) => {
   if (options.category) {
     selectCategoryById(options.category)
@@ -162,6 +178,7 @@ onLoad((options = {}) => {
 // onShow: 每次页面可见时立即刷新 + 启动轮询
 onShow(() => {
   applyPendingCategory()
+  applyPendingSearchFocus()
   refreshMenu()
   startMenuRealtimeSync(MENU_REALTIME_OWNER)
   if (!menuPollTimer) {
@@ -206,10 +223,11 @@ const selectCategory = (index) => {
 }
 
 const toggleSearch = () => {
-  searchActive.value = true
+  focusSearchInput()
 }
 
 const onSearchBlur = () => {
+  searchInputFocus.value = false
   if (!searchText.value.trim()) {
     searchActive.value = false
   }

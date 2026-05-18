@@ -6,7 +6,8 @@
         <view class="header anim-item" :style="{ animationDelay: '0.05s' }">
           <view class="hd-left">
             <text class="greeting-sub">{{ greetingText }} 👨‍🍳</text>
-            <text class="greeting-main">今天又要宠她啦！</text>
+            <text class="greeting-main love-poem">{{ dailyLovePoem.text }}</text>
+            <text class="poem-source">--{{ dailyLovePoem.source }}</text>
           </view>
           <view class="avatar-wrap" @click="goProfile">
             <view class="avatar">
@@ -81,8 +82,10 @@ import { computed, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
 import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud, getChefEntryUrl, formatCartRiskWarnings } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
+import { getDailyLovePoem } from '@/utils/lovePoems.js'
 const chef = computed(() => store.chef)
 const currentRoomId = computed(() => store.roomId || '未加入房间')
+const dailyLovePoem = computed(() => getDailyLovePoem())
 
 // 页面显示时刷新云端订单
 let pollTimer = null
@@ -176,11 +179,13 @@ const copyRoomId = () => {
 .scroll-wrapper { height: calc(100vh - var(--status-bar-height, 44px)); width: 100%; }
 .wrapper { padding: 32rpx 40rpx 48rpx; display: flex; flex-direction: column; gap: 40rpx; }
 .anim-item { animation: fadeInUp 0.5s ease both; }
-.header { display: flex; justify-content: space-between; align-items: center; }
-.hd-left { display: flex; flex-direction: column; gap: 8rpx; }
+.header { display: flex; justify-content: space-between; align-items: center; gap: 24rpx; }
+.hd-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8rpx; }
 .greeting-sub { font-size: 28rpx; color: #86909C; }
 .greeting-main { font-size: 44rpx; font-weight: bold; color: #1D2129; }
-.avatar-wrap { flex-shrink: 0; margin-right: 200rpx; }
+.love-poem { font-size: 38rpx; line-height: 1.35; white-space: nowrap; }
+.poem-source { font-size: 30rpx; color: #86909C; line-height: 1.4; }
+.avatar-wrap { flex-shrink: 0; margin-right: 180rpx; }
 .avatar { width: 88rpx; height: 88rpx; border-radius: 50%; background: #E8F3FF; display: flex; align-items: center; justify-content: center; font-size: 44rpx; border: 4rpx solid #fff; box-shadow: 0 4rpx 12rpx rgba(0,0,0,0.08); transition: transform 0.3s ease; overflow: hidden; }
 .avatar-image { width: 100%; height: 100%; }
 .avatar-emoji { font-size: 44rpx; }

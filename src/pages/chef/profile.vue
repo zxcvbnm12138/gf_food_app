@@ -102,7 +102,7 @@ const doLogout = () => { clearLoginState(); clearRole(); uni.reLaunch({ url: '/p
 .page { display: flex; flex-direction: column; height: 100vh; background: linear-gradient(180deg, #4080FF 0, #6AA1FF 360rpx, #F7F8FA 360rpx, #F7F8FA 100%); position: relative; overflow: hidden; }
 .status-bar-p { height: var(--status-bar-height, 44px); width: 100%; }
 .profile-header { background: linear-gradient(180deg, #4080FF 0%, #6AA1FF 100%); padding: 16rpx 40rpx 56rpx; display: flex; flex-direction: column; align-items: center; gap: 24rpx; }
-.avatar-area { position: relative; }
+.avatar-area { position: relative; margin-top: 32rpx; }
 .avatar-button { width: 156rpx; height: 156rpx; padding: 0; margin: 0; border: 0; border-radius: 50%; background: transparent; line-height: 1; overflow: visible; }
 .avatar-button::after { border: 0; }
 .avatar-ring { width: 144rpx; height: 144rpx; border-radius: 50%; background: #E8F3FF; border: 6rpx solid #FFFFFF; display: flex; align-items: center; justify-content: center; box-shadow: 0 8rpx 24rpx rgba(0,0,0,0.15); animation: bounceIn 0.6s ease; overflow: hidden; }
