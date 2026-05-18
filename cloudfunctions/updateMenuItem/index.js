@@ -44,6 +44,20 @@ function normalizeStringArray(value, maxItems = 20, maxLength = 80) {
     .slice(0, maxItems)
 }
 
+function normalizeKeywordList(value, maxItems = 20, maxLength = 40) {
+  if (Array.isArray(value)) {
+    return normalizeStringArray(value, maxItems, maxLength)
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[,，、;；\n]/)
+      .map(item => normalizeText(item, maxLength))
+      .filter(Boolean)
+      .slice(0, maxItems)
+  }
+  return []
+}
+
 function normalizeOptionGroups(value) {
   if (!Array.isArray(value)) return []
   return value
@@ -76,6 +90,8 @@ function sanitizeMenuItemFields(fields) {
   if ('sweetOptions' in fields) data.sweetOptions = normalizeStringArray(fields.sweetOptions, 30, 60)
   if ('extraLabel' in fields) data.extraLabel = normalizeText(fields.extraLabel, 30)
   if ('extraOptions' in fields) data.extraOptions = normalizeStringArray(fields.extraOptions, 30, 60)
+  if ('dislikeKeywords' in fields) data.dislikeKeywords = normalizeKeywordList(fields.dislikeKeywords)
+  if ('allergyKeywords' in fields) data.allergyKeywords = normalizeKeywordList(fields.allergyKeywords)
 
   return data
 }
@@ -96,7 +112,7 @@ function sanitizeCouponFields(fields) {
   if (!fields || typeof fields !== 'object') return {}
   const rawId = normalizeText(fields.id, 80)
   const required = Math.max(0, Number(fields.required) || 0)
-  return {
+  const data = {
     id: rawId.replace(/[^\w-]/g, '') || '',
     name: normalizeText(fields.name, 40),
     desc: normalizeText(fields.desc, 160),
@@ -104,6 +120,10 @@ function sanitizeCouponFields(fields) {
     color: normalizeText(fields.color || '#FFF1F0', 32) || '#FFF1F0',
     required,
   }
+  if ('redeemed' in fields) data.redeemed = fields.redeemed === true
+  if ('redeemedAt' in fields) data.redeemedAt = fields.redeemedAt || null
+  if ('redeemedBy' in fields) data.redeemedBy = normalizeText(fields.redeemedBy, 80)
+  return data
 }
 
 function isRoomMember(room, openid) {
@@ -240,6 +260,39 @@ async function touchRoomMenu(roomId) {
   }
 }
 
+async function findCouponDoc({ cloudId, couponId, roomId }) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  const docId = String(cloudId || '').trim()
+  let doc = null
+
+  if (docId) {
+    try {
+      const res = await db.collection('custom_coupons').doc(docId).get()
+      if (res && res.data) {
+        doc = { ...res.data, _id: res.data._id || docId }
+      }
+    } catch (e) {
+      doc = null
+    }
+  }
+
+  if (!doc) {
+    const normalizedCouponId = String(couponId || docId || '').trim()
+    if (!normalizedCouponId || !normalizedRoomId) return null
+    const res = await db.collection('custom_coupons')
+      .where({ roomId: normalizedRoomId, id: normalizedCouponId })
+      .limit(1)
+      .get()
+    doc = Array.isArray(res.data) ? res.data[0] || null : null
+  }
+
+  if (!doc) return null
+  return {
+    doc,
+    roomId: normalizeRoomId(doc.roomId || roomId),
+  }
+}
+
 exports.main = async (event, context) => {
   const { action = 'update', cloudId, updateFields } = event
   const wxContext = cloud.getWXContext()
@@ -279,16 +332,87 @@ exports.main = async (event, context) => {
         color: couponFields.color,
         required: couponFields.required,
         custom: true,
+        redeemed: false,
+        redeemedAt: null,
+        redeemedBy: '',
         roomId,
         createdAt: now,
         updatedAt: now,
       }
 
       const res = await addCollectionDoc('custom_coupons', coupon)
+      await touchRoomMenu(roomId)
       return { success: true, _id: res._id, coupon: { ...coupon, _id: res._id } }
     } catch (e) {
       console.error('新增特权失败:', e)
       return { success: false, message: e.message || '新增失败' }
+    }
+  }
+
+  if (action === 'deleteCoupon') {
+    const couponId = String(event.couponId || '').trim()
+    if (!roomId || (!cloudId && !couponId)) {
+      return { success: false, message: '缺少参数' }
+    }
+
+    try {
+      const found = await findCouponDoc({ cloudId, couponId, roomId })
+      if (!found || !found.doc || !found.roomId) {
+        return { success: false, message: '兑换券不存在' }
+      }
+      if (found.roomId !== roomId) {
+        return { success: false, message: '兑换券不属于当前房间' }
+      }
+      const auth = await ensureRoomAuth(found.roomId)
+      if (!auth.success) return auth
+
+      const res = await db.collection('custom_coupons').doc(found.doc._id).remove()
+      await touchRoomMenu(found.roomId)
+      return { success: true, removed: res.stats.removed }
+    } catch (e) {
+      console.error('删除特权失败:', e)
+      return { success: false, message: e.message || '删除失败' }
+    }
+  }
+
+  if (action === 'redeemCoupon') {
+    const couponId = String(event.couponId || '').trim()
+    if (!roomId || (!cloudId && !couponId)) {
+      return { success: false, message: '缺少参数' }
+    }
+
+    try {
+      const found = await findCouponDoc({ cloudId, couponId, roomId })
+      if (!found || !found.doc || !found.roomId) {
+        return { success: false, message: '兑换券不存在' }
+      }
+      if (found.roomId !== roomId) {
+        return { success: false, message: '兑换券不属于当前房间' }
+      }
+      const auth = await ensureRoomAuth(found.roomId)
+      if (!auth.success) return auth
+
+      const now = new Date()
+      const nextFields = {
+        redeemed: true,
+        redeemedAt: now,
+        redeemedBy: openid,
+        updatedAt: now,
+      }
+      await db.collection('custom_coupons').doc(found.doc._id).update({
+        data: nextFields,
+      })
+      await touchRoomMenu(found.roomId)
+      return {
+        success: true,
+        coupon: {
+          ...found.doc,
+          ...nextFields,
+        },
+      }
+    } catch (e) {
+      console.error('兑换特权失败:', e)
+      return { success: false, message: e.message || '兑换失败' }
     }
   }
 

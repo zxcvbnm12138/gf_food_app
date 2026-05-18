@@ -6,6 +6,8 @@ import {
   deleteMenuCategory as cloudDeleteMenuCategory,
   fetchCustomCoupons as cloudFetchCustomCoupons,
   addCustomCoupon as cloudAddCustomCoupon,
+  deleteCustomCoupon as cloudDeleteCustomCoupon,
+  redeemCustomCoupon as cloudRedeemCustomCoupon,
   addMenuItem as cloudAddMenuItem,
   updateMenuItem as cloudUpdateMenuItem,
   deleteMenuItem as cloudDeleteMenuItem,
@@ -32,6 +34,9 @@ import {
   watchRoomMenuVersion as cloudWatchRoomMenuVersion,
   normalizeRoomId,
   setLocalMenuItemAvailability,
+  fetchRoomUserPreferences as cloudFetchRoomUserPreferences,
+  saveRoomUserPreferences as cloudSaveRoomUserPreferences,
+  normalizePreferenceList,
 } from '@/services/cloud.js'
 
 const ORDERS_STORAGE_KEY = 'gf_food_orders'
@@ -59,8 +64,11 @@ const defaultMenuCategories = getDefaultMenuCategories()
 
 // 状态优先级：只允许前进，不允许回退
 const STATUS_PRIORITY = { pending: 0, accepted: 1, cooking: 2, done: 3 }
+const initialLogin = cloudCheckLogin()
 const initialRoomId = getStoredRoomId()
+const initialOpenid = initialLogin?.openid || ''
 let ordersRoomId = initialRoomId
+let userPreferenceSyncSeq = 0
 
 function normalizeCoupon(coupon) {
   if (!coupon) return null
@@ -75,7 +83,12 @@ function normalizeCoupon(coupon) {
     color: coupon.color || '#FFF1F0',
     required,
     available: false,
+    redeemed: coupon.redeemed === true,
+    redeemedAt: coupon.redeemedAt || null,
+    redeemedBy: String(coupon.redeemedBy || '').trim(),
     custom: coupon.custom === true,
+    roomId: normalizeRoomId(coupon.roomId || ''),
+    _id: coupon._id || '',
   }
 }
 
@@ -317,6 +330,10 @@ function cloneCartItem(item) {
     image: item.image,
     price: item.price,
     qty: item.qty,
+    dislikeKeywords: Array.isArray(item.dislikeKeywords) ? [...item.dislikeKeywords] : [],
+    allergyKeywords: Array.isArray(item.allergyKeywords) ? [...item.allergyKeywords] : [],
+    ingredientTags: Array.isArray(item.ingredientTags) ? [...item.ingredientTags] : [],
+    riskTags: Array.isArray(item.riskTags) ? [...item.riskTags] : [],
     optionGroups: getMenuItemOptionGroups(item),
     options: {
       sweet: item.options?.sweet || '',
@@ -361,8 +378,8 @@ const store = reactive({
   currentRole: readStoredRole(),
 
   // 登录态
-  isLoggedIn: !!cloudCheckLogin(),
-  openid: cloudCheckLogin()?.openid || '',
+  isLoggedIn: !!initialLogin,
+  openid: initialOpenid,
 
   // 房间号
   roomId: initialRoomId,
@@ -402,7 +419,7 @@ const store = reactive({
     feedCount: 0,
     privileges: 0,
     favorites: 0,
-    dislikes: ['香菜', '苦瓜'],
+    dislikes: [],
     allergies: [],
   },
 
@@ -428,6 +445,81 @@ const store = reactive({
   activeRushNotification: null,
 })
 
+function normalizeStoredUserPreferences(preferences = {}) {
+  return {
+    dislikes: normalizePreferenceList(preferences.dislikes),
+    allergies: normalizePreferenceList(preferences.allergies),
+  }
+}
+
+function applyUserPreferencesToStore(preferences) {
+  const next = normalizeStoredUserPreferences(preferences)
+  store.user.dislikes = [...next.dislikes]
+  store.user.allergies = [...next.allergies]
+
+  return next
+}
+
+function resetUserPreferencesToDefaults() {
+  return applyUserPreferencesToStore({})
+}
+
+export async function loadCurrentRoomUserPreferences() {
+  const roomId = normalizeRoomId(store.roomId)
+  const openid = String(store.openid || '').trim()
+
+  if (!roomId || !openid) {
+    return resetUserPreferencesToDefaults()
+  }
+
+  const seq = ++userPreferenceSyncSeq
+  resetUserPreferencesToDefaults()
+
+  if (!isCloudAvailable()) {
+    return resetUserPreferencesToDefaults()
+  }
+
+  try {
+    const cloudPreferences = await cloudFetchRoomUserPreferences(roomId, openid)
+    if (seq !== userPreferenceSyncSeq) {
+      return normalizeStoredUserPreferences(store.user)
+    }
+    return applyUserPreferencesToStore(cloudPreferences || {})
+  } catch (e) {
+    console.warn('[Store] 加载房间偏好失败，已清空本地展示', e)
+  }
+
+  return resetUserPreferencesToDefaults()
+}
+
+export async function saveCurrentRoomUserPreferences(preferences = {}) {
+  const roomId = normalizeRoomId(store.roomId)
+  const openid = String(store.openid || '').trim()
+  if (!roomId || !openid) {
+    return null
+  }
+
+  const basePreferences = normalizeStoredUserPreferences({
+    dislikes: preferences.dislikes ?? store.user.dislikes,
+    allergies: preferences.allergies ?? store.user.allergies,
+  })
+
+  if (!isCloudAvailable()) {
+    return null
+  }
+
+  try {
+    const cloudPreferences = await cloudSaveRoomUserPreferences(roomId, openid, basePreferences)
+    if (cloudPreferences) {
+      return applyUserPreferencesToStore(cloudPreferences)
+    }
+  } catch (e) {
+    console.warn('[Store] 保存房间偏好失败，未写入本地展示', e)
+  }
+
+  return null
+}
+
 refreshUserStats()
 
 export function refreshUserStats() {
@@ -439,7 +531,7 @@ export function refreshUserStats() {
   store.user.feedCount = feedCount
   store.user.favorites = store.favoriteItemIds.length
   store.coupons.forEach((coupon) => {
-    coupon.available = feedCount >= coupon.required
+    coupon.available = coupon.redeemed !== true && feedCount >= coupon.required
   })
   store.user.privileges = store.coupons.filter((coupon) => coupon.available).length
 }
@@ -494,17 +586,54 @@ export async function addCustomCoupon(data) {
   return normalizedCoupon
 }
 
+export async function deleteCustomCouponFromCloud(coupon) {
+  const target = normalizeCoupon(coupon)
+  const roomId = normalizeRoomId(store.roomId)
+  if (!target || !roomId) return false
+
+  const success = await cloudDeleteCustomCoupon(target, roomId)
+  if (!success) return false
+
+  const idx = store.coupons.findIndex(item => item.id === target.id || (target._id && item._id === target._id))
+  if (idx !== -1) {
+    store.coupons.splice(idx, 1)
+  }
+  refreshUserStats()
+  return true
+}
+
+export async function redeemCustomCouponInCloud(coupon) {
+  const target = normalizeCoupon(coupon)
+  const roomId = normalizeRoomId(store.roomId)
+  if (!target || !roomId || target.redeemed) return null
+
+  const redeemedCoupon = await cloudRedeemCustomCoupon(target, roomId)
+  if (!redeemedCoupon) return null
+
+  const normalizedCoupon = normalizeCoupon({ ...redeemedCoupon, custom: true })
+  const idx = store.coupons.findIndex(item => item.id === normalizedCoupon.id || (normalizedCoupon._id && item._id === normalizedCoupon._id))
+  if (idx !== -1) {
+    store.coupons.splice(idx, 1, normalizedCoupon)
+  } else {
+    store.coupons.push(normalizedCoupon)
+  }
+  refreshUserStats()
+  return normalizedCoupon
+}
+
 // ========== 登录管理 ==========
 
 export function setLoginState(openid) {
   store.isLoggedIn = true
-  store.openid = openid
+  store.openid = String(openid || '').trim()
+  resetUserPreferencesToDefaults()
 }
 
 export function clearLoginState() {
   store.isLoggedIn = false
   store.openid = ''
   cloudLogout()
+  resetUserPreferencesToDefaults()
 }
 
 export function isLoggedIn() {
@@ -570,6 +699,7 @@ export function setRoomId(roomId) {
     store.ordersLoaded = false
     clearCart()
   }
+  resetUserPreferencesToDefaults()
 }
 
 export function getRoomId() {
@@ -586,6 +716,7 @@ export function clearRoomId() {
   store.ordersLoaded = false
   clearCart()
   clearStoredRoomId()
+  resetUserPreferencesToDefaults()
 }
 
 export function setRoomInfo(info) {
@@ -976,6 +1107,10 @@ export async function loadOrdersFromCloud() {
             completedAt: cloudPriority >= 3 ? (co.completedAt || local.completedAt) : local.completedAt,
             rushLastTime: co.rushLastTime || null,
             rushCount: co.rushCount || 0,
+            riskWarnings: Array.isArray(co.riskWarnings)
+              ? co.riskWarnings
+              : (Array.isArray(local.riskWarnings) ? local.riskWarnings : []),
+            riskCheckedAt: co.riskCheckedAt || local.riskCheckedAt || null,
           })
         } else {
           // 云端有但本地没有，添加到本地
@@ -1103,6 +1238,120 @@ export function formatOrderItemOptions(item) {
   return parts.join(' / ') || '默认口味'
 }
 
+function matchesRiskText(text, term) {
+  const source = String(text || '').toLowerCase()
+  const keyword = String(term || '').trim().toLowerCase()
+  if (!source || !keyword) return false
+
+  let index = source.indexOf(keyword)
+  while (index !== -1) {
+    const prefix = source.slice(Math.max(0, index - 6), index)
+    if (!/(不要|不加|不放|不含|无|免|去掉|去|少|别加|别放|勿加|勿放)/.test(prefix)) {
+      return true
+    }
+    index = source.indexOf(keyword, index + keyword.length)
+  }
+  return false
+}
+
+function matchesExplicitRiskTerm(values, term) {
+  const keyword = String(term || '').trim().toLowerCase()
+  if (!keyword) return false
+  return normalizePreferenceList(values).some(value => {
+    const source = String(value || '').trim().toLowerCase()
+    return !!source && (source === keyword || source.includes(keyword) || keyword.includes(source))
+  })
+}
+
+function buildRiskTextForItem(item) {
+  const selectedGroups = Array.isArray(item?.options?.groups) ? item.options.groups : []
+  return [
+    item?.name,
+    item?.desc,
+    item?.fullDesc,
+    item?.options?.sweet,
+    item?.options?.extra,
+    ...(Array.isArray(item?.options?.extras) ? item.options.extras : []),
+    ...(selectedGroups.flatMap(group => Array.isArray(group.values) ? group.values : [])),
+    item?.options?.note,
+  ]
+    .filter(Boolean)
+    .join(' \n ')
+}
+
+export function getCartRiskWarnings(cartItems = store.cart, preferences = store.user) {
+  const dislikes = normalizePreferenceList(preferences?.dislikes)
+  const allergies = normalizePreferenceList(preferences?.allergies)
+  const warnings = []
+
+  ;(Array.isArray(cartItems) ? cartItems : []).forEach((item) => {
+    const itemId = item?._id || item?.id || ''
+    const riskText = buildRiskTextForItem(item)
+    const explicitDislikes = [
+      item?.dislikeKeywords,
+      item?.ingredientTags,
+      item?.riskTags,
+    ]
+    const explicitAllergies = [
+      item?.allergyKeywords,
+      item?.ingredientTags,
+      item?.riskTags,
+    ]
+    const matched = []
+    const seen = new Set()
+
+    dislikes.forEach((term) => {
+      const key = `dislike:${term}`
+      if (seen.has(key)) return
+      if (
+        matchesExplicitRiskTerm(explicitDislikes, term) ||
+        matchesRiskText(riskText, term)
+      ) {
+        seen.add(key)
+        matched.push({ type: 'dislike', term, label: '绝对不吃' })
+      }
+    })
+
+    allergies.forEach((term) => {
+      const key = `allergy:${term}`
+      if (seen.has(key)) return
+      if (
+        matchesExplicitRiskTerm(explicitAllergies, term) ||
+        matchesRiskText(riskText, term)
+      ) {
+        seen.add(key)
+        matched.push({ type: 'allergy', term, label: '过敏提醒' })
+      }
+    })
+
+    if (matched.length > 0) {
+      warnings.push({
+        itemId,
+        itemName: item?.name || '未知菜品',
+        quantity: Number(item?.qty) || 1,
+        matches: matched,
+      })
+    }
+  })
+
+  return warnings
+}
+
+export function formatCartRiskWarnings(warnings) {
+  const list = Array.isArray(warnings) ? warnings : []
+  if (list.length === 0) return ''
+
+  return list
+    .slice(0, 4)
+    .map((warning) => {
+      const terms = warning.matches
+        .map(match => `${match.label}「${match.term}」`)
+        .join('、')
+      return `${warning.itemName}${terms ? `：${terms}` : ''}`
+    })
+    .join('\n')
+}
+
 // ========== 购物车操作 ==========
 
 export function addToCart(item, options = {}) {
@@ -1148,6 +1397,7 @@ export async function createOrderFromCart() {
   if (store.cart.length === 0) return null
 
   const now = new Date()
+  const riskWarnings = getCartRiskWarnings()
   const order = {
     id: `GF${now.getTime()}`,
     roomId: store.roomId,
@@ -1160,6 +1410,8 @@ export async function createOrderFromCart() {
     completedAt: null,
     rushLastTime: null,
     rushCount: 0,
+    riskWarnings,
+    riskCheckedAt: now.toISOString(),
     items: store.cart.map(cloneCartItem),
   }
 

@@ -86,6 +86,35 @@ function writeLocalMenuOverrides(data) {
   }
 }
 
+function splitPreferenceList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap(item => splitPreferenceList(item))
+  }
+  if (value === null || value === undefined) return []
+  return String(value)
+    .split(/[,，、;；\n]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+export function normalizePreferenceList(value) {
+  return Array.from(new Set(splitPreferenceList(value)))
+}
+
+export function getDefaultUserPreferences() {
+  return {
+    dislikes: [],
+    allergies: [],
+  }
+}
+
+function normalizeUserPreferences(preferences) {
+  return {
+    dislikes: normalizePreferenceList(preferences?.dislikes),
+    allergies: normalizePreferenceList(preferences?.allergies),
+  }
+}
+
 export function setLocalMenuItemAvailability(itemId, available) {
   if (!itemId) return
   const overrides = readLocalMenuOverrides()
@@ -311,6 +340,154 @@ export function clearStoredRoomId() {
     if (typeof uni === 'undefined') return
     uni.removeStorageSync(ROOM_STORAGE_KEY)
   } catch (e) { /* ignore */ }
+}
+
+async function queryRoomUserPreferencesFromDb(roomId, openid) {
+  const db = getDB()
+  if (!db) return null
+
+  try {
+    const res = await db.collection('room_user_preferences')
+      .where({ roomId, openid })
+      .limit(1)
+      .get()
+    const doc = Array.isArray(res.data) ? res.data[0] : null
+    return doc ? { _id: doc._id, ...normalizeUserPreferences(doc) } : null
+  } catch (error) {
+    if (isCollectionMissingError(error)) return null
+    throw error
+  }
+}
+
+export async function fetchRoomUserPreferences(roomId, openid) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  const normalizedOpenid = String(openid || '').trim()
+  const emptyPreferences = getDefaultUserPreferences()
+
+  if (!normalizedRoomId || !normalizedOpenid) {
+    return emptyPreferences
+  }
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return emptyPreferences
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateRoomPreferences',
+      data: {
+        action: 'get',
+        roomId: normalizedRoomId,
+      },
+    })
+    if (res.result && res.result.success) {
+      if (res.result.found === false) {
+        return emptyPreferences
+      }
+
+      if (res.result.preferences) {
+        return normalizeUserPreferences(res.result.preferences)
+      }
+    }
+    if (isCloudAccessDeniedResult(res.result)) return emptyPreferences
+    console.warn('[Cloud] 云函数获取房间偏好返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数获取房间偏好失败，尝试直接查询:', e.message || e)
+  }
+
+  try {
+    const preferences = await queryRoomUserPreferencesFromDb(normalizedRoomId, normalizedOpenid)
+    if (preferences) {
+      return normalizeUserPreferences(preferences)
+    }
+  } catch (e) {
+    console.warn('[Cloud] 直接获取房间偏好失败:', e)
+  }
+
+  return emptyPreferences
+}
+
+export async function saveRoomUserPreferences(roomId, openid, preferences) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  const normalizedOpenid = String(openid || '').trim()
+  if (!normalizedRoomId || !normalizedOpenid) {
+    return null
+  }
+
+  const normalizedPreferences = normalizeUserPreferences(preferences)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return null
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateRoomPreferences',
+      data: {
+        action: 'save',
+        roomId: normalizedRoomId,
+        preferences: normalizedPreferences,
+      },
+    })
+    if (res.result && res.result.success && res.result.preferences) {
+      return normalizeUserPreferences(res.result.preferences)
+    }
+    if (isCloudAccessDeniedResult(res.result)) return null
+    console.warn('[Cloud] 云函数保存房间偏好返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数保存房间偏好失败，尝试直接写入:', e.message || e)
+  }
+
+  try {
+    const db = getDB()
+    if (!db) return null
+    const existing = await queryRoomUserPreferencesFromDb(normalizedRoomId, normalizedOpenid)
+    const payload = {
+      ...normalizedPreferences,
+      roomId: normalizedRoomId,
+      openid: normalizedOpenid,
+      updatedAt: new Date(),
+    }
+
+    if (existing && existing._id) {
+      await db.collection('room_user_preferences').doc(existing._id).update({
+        data: payload,
+      })
+    } else {
+      await addCloudDbDoc('room_user_preferences', {
+        ...payload,
+        createdAt: new Date(),
+      })
+    }
+    return normalizedPreferences
+  } catch (e) {
+    console.error('[Cloud] 保存房间偏好失败:', e)
+    return null
+  }
+}
+
+export async function clearRoomUserPreferences(roomId, openid) {
+  const normalizedRoomId = normalizeRoomId(roomId)
+  const normalizedOpenid = String(openid || '').trim()
+  if (!normalizedRoomId || !normalizedOpenid) {
+    return false
+  }
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return true
+  }
+
+  try {
+    const db = getDB()
+    if (!db) return false
+    const existing = await queryRoomUserPreferencesFromDb(normalizedRoomId, normalizedOpenid)
+    if (!existing || !existing._id) return true
+    await db.collection('room_user_preferences').doc(existing._id).remove()
+    return true
+  } catch (e) {
+    console.warn('[Cloud] 清除房间偏好失败:', e)
+    return false
+  }
 }
 
 /**
@@ -1156,6 +1333,9 @@ function normalizeCoupon(coupon) {
     color: coupon.color || '#FFF1F0',
     required,
     available: false,
+    redeemed: coupon.redeemed === true,
+    redeemedAt: coupon.redeemedAt || null,
+    redeemedBy: String(coupon.redeemedBy || '').trim(),
     custom: true,
     roomId: normalizeRoomId(coupon.roomId || ''),
     _id: coupon._id || '',
@@ -1259,12 +1439,130 @@ export async function addCustomCoupon(couponData, roomId) {
       ...coupon,
       roomId,
       custom: true,
+      redeemed: false,
+      redeemedAt: null,
+      redeemedBy: '',
       createdAt: now,
       updatedAt: now,
     })
     return { ...coupon, roomId, _id: res._id }
   } catch (e) {
     console.error('[Cloud] 新增特权失败:', e)
+    return null
+  }
+}
+
+export async function deleteCustomCoupon(couponData, roomId) {
+  roomId = normalizeRoomId(roomId)
+  const couponId = String(couponData?.id || '').trim()
+  const cloudId = String(couponData?._id || '').trim()
+  if (!roomId || (!couponId && !cloudId)) return false
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return false
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateMenuItem',
+      data: {
+        action: 'deleteCoupon',
+        cloudId,
+        couponId,
+        roomId,
+      },
+    })
+    if (res.result && res.result.success) {
+      return true
+    }
+    if (isCloudAccessDeniedResult(res.result)) return false
+    console.warn('[Cloud] 云函数删除特权返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数删除特权失败，尝试直接删除:', e.message || e)
+  }
+
+  try {
+    const db = getDB()
+    if (!db) return false
+    if (cloudId) {
+      const current = await db.collection('custom_coupons').doc(cloudId).get()
+      if (normalizeRoomId(current.data?.roomId || '') !== roomId) return false
+      await db.collection('custom_coupons').doc(cloudId).remove()
+      return true
+    }
+    const res = await db.collection('custom_coupons')
+      .where({ roomId, id: couponId })
+      .limit(1)
+      .get()
+    const doc = Array.isArray(res.data) ? res.data[0] : null
+    if (!doc || !doc._id) return false
+    await db.collection('custom_coupons').doc(doc._id).remove()
+    return true
+  } catch (e) {
+    console.error('[Cloud] 删除特权失败:', e)
+    return false
+  }
+}
+
+export async function redeemCustomCoupon(couponData, roomId) {
+  roomId = normalizeRoomId(roomId)
+  const couponId = String(couponData?.id || '').trim()
+  const cloudId = String(couponData?._id || '').trim()
+  if (!roomId || (!couponId && !cloudId)) return null
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return null
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateMenuItem',
+      data: {
+        action: 'redeemCoupon',
+        cloudId,
+        couponId,
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && res.result.coupon) {
+      return normalizeCoupon(res.result.coupon)
+    }
+    if (isCloudAccessDeniedResult(res.result)) return null
+    console.warn('[Cloud] 云函数兑换特权返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数兑换特权失败，尝试直接更新:', e.message || e)
+  }
+
+  try {
+    const db = getDB()
+    if (!db) return null
+    let docId = cloudId
+    let existing = null
+    if (docId) {
+      const res = await db.collection('custom_coupons').doc(docId).get()
+      existing = res.data ? { ...res.data, _id: res.data._id || docId } : null
+      if (existing && normalizeRoomId(existing.roomId || '') !== roomId) return null
+    } else {
+      const res = await db.collection('custom_coupons')
+        .where({ roomId, id: couponId })
+        .limit(1)
+        .get()
+      existing = Array.isArray(res.data) ? res.data[0] : null
+      docId = existing?._id || ''
+    }
+    if (!existing || !docId) return null
+    const nextFields = {
+      redeemed: true,
+      redeemedAt: new Date(),
+      redeemedBy: checkLogin()?.openid || '',
+      updatedAt: new Date(),
+    }
+    await db.collection('custom_coupons').doc(docId).update({
+      data: nextFields,
+    })
+    return normalizeCoupon({ ...existing, ...nextFields, _id: docId })
+  } catch (e) {
+    console.error('[Cloud] 兑换特权失败:', e)
     return null
   }
 }

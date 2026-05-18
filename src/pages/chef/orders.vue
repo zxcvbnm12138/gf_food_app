@@ -33,6 +33,7 @@
             </view>
           </view>
           <text v-if="order.note" class="order-note">💌 {{ order.note }}</text>
+          <text v-if="order.riskWarnings && order.riskWarnings.length" class="order-risk">⚠️ {{ formatRiskWarnings(order.riskWarnings) }}</text>
           <view class="order-footer">
             <text class="order-total">共 {{ order.totalCount }} 件</text>
             <view v-if="activeTab === 0" class="action-btn accept" @click="doAccept(order.id)"><text class="action-btn-text">接单</text></view>
@@ -55,7 +56,7 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, loadOrdersFromCloud, formatOrderItemOptions } from '@/store/index.js'
+import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, loadOrdersFromCloud, formatOrderItemOptions, formatCartRiskWarnings } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const activeTab = ref(0)
 
@@ -119,6 +120,7 @@ const emptyEmoji = computed(() => ['📥','🍳','📋'][activeTab.value])
 const emptyText = computed(() => ['暂无待接单订单～','暂无制作中订单～','暂无已完成订单～'][activeTab.value])
 const fmtTime = (iso) => { if (!iso) return '--:--'; const d = new Date(iso); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` }
 const getOptsText = (item) => formatOrderItemOptions(item)
+const formatRiskWarnings = (warnings) => formatCartRiskWarnings(warnings)
 const isOperating = ref(false)
 
 const doAccept = async (id) => {
@@ -199,6 +201,7 @@ const doDone = async (id) => {
 .item-name { font-size: 26rpx; color: #1D2129; font-weight: bold; }
 .item-opts { font-size: 22rpx; color: #86909C; }
 .order-note { font-size: 22rpx; color: #86909C; line-height: 1.5; padding: 12rpx 16rpx; background: #FFF7E6; border-radius: 16rpx; }
+.order-risk { font-size: 22rpx; color: #D4380D; line-height: 1.5; padding: 12rpx 16rpx; background: #FFF2E8; border-radius: 16rpx; }
 .order-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 8rpx; border-top: 2rpx solid #F2F3F5; }
 .order-total { font-size: 24rpx; color: #86909C; }
 .action-btn { padding: 14rpx 36rpx; border-radius: 28rpx; transition: transform 0.2s ease; }

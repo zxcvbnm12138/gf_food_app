@@ -61,8 +61,12 @@
           v-for="(coupon, index) in previewCoupons"
           :key="coupon.id"
           class="coupon-card"
+          :class="{ redeemed: coupon.redeemed }"
           :style="{ animationDelay: (index * 0.08) + 's' }"
         >
+          <view v-if="coupon.redeemed" class="redeemed-stamp">
+            <text class="redeemed-stamp-text">已兑换</text>
+          </view>
           <view class="coupon-icon-bg" :style="{ background: coupon.color }">
             <text class="coupon-emoji">{{ coupon.emoji }}</text>
           </view>
@@ -72,11 +76,11 @@
           </view>
           <view
             class="coupon-btn"
-            :class="{ available: coupon.available }"
+            :class="{ available: coupon.available, redeemed: coupon.redeemed }"
             @click="redeemCoupon(coupon)"
           >
-            <text class="coupon-btn-text" :class="{ available: coupon.available }">
-              {{ coupon.available ? '兑换' : '未达成' }}
+            <text class="coupon-btn-text" :class="{ available: coupon.available, redeemed: coupon.redeemed }">
+              {{ getCouponButtonText(coupon) }}
             </text>
           </view>
         </view>
@@ -220,6 +224,9 @@ import store, {
   clearCurrentRoomOrdersData,
   addCustomCoupon,
   loadCustomCouponsFromCloud,
+  redeemCustomCouponInCloud,
+  loadCurrentRoomUserPreferences,
+  saveCurrentRoomUserPreferences,
 } from '@/store/index.js'
 import { leaveRoom, checkLogin } from '@/services/cloud.js'
 import TabBar from '@/components/TabBar.vue'
@@ -245,7 +252,10 @@ const couponForm = ref({
   required: '',
 })
 
-onShow(() => {
+onShow(async () => {
+  await loadCurrentRoomUserPreferences().catch((e) => {
+    console.warn('[Profile] 刷新房间偏好失败', e)
+  })
   refreshUserStats()
   loadCustomCouponsFromCloud()
     .then(() => refreshUserStats())
@@ -266,6 +276,14 @@ const onChooseAvatar = (e) => {
 }
 
 const redeemCoupon = (coupon) => {
+  if (coupon.redeemed) {
+    uni.showToast({
+      title: '已经兑换过啦',
+      icon: 'none',
+      duration: 1500
+    })
+    return
+  }
   if (!coupon.available) {
     uni.showToast({
       title: '还没达成条件哦～',
@@ -278,13 +296,33 @@ const redeemCoupon = (coupon) => {
   showRedeem.value = true
 }
 
-const confirmRedeem = () => {
-  showRedeem.value = false
-  uni.showToast({
-    title: '🎉 兑换成功！',
-    icon: 'none',
-    duration: 2000
-  })
+const getCouponButtonText = (coupon) => {
+  if (coupon.redeemed) return '已兑换'
+  return coupon.available ? '兑换' : '未达成'
+}
+
+const confirmRedeem = async () => {
+  const coupon = redeemItem.value
+  if (!coupon || !coupon.id) return
+
+  uni.showLoading({ title: '兑换中...', mask: true })
+  try {
+    const redeemed = await redeemCustomCouponInCloud(coupon)
+    uni.hideLoading()
+    showRedeem.value = false
+    if (!redeemed) {
+      uni.showToast({ title: '兑换失败，请重试', icon: 'none' })
+      return
+    }
+    uni.showToast({
+      title: '🎉 兑换成功！',
+      icon: 'none',
+      duration: 2000
+    })
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: '兑换失败，请重试', icon: 'none' })
+  }
 }
 
 const openAddCoupon = () => {
@@ -332,9 +370,24 @@ const addDislike = () => {
     title: '添加不吃的食物',
     editable: true,
     placeholderText: '请输入食物名称',
-    success: (res) => {
-      if (res.confirm && res.content && res.content.trim()) {
-        store.user.dislikes.push(res.content.trim())
+    success: async (res) => {
+      const nextValue = res.confirm && res.content ? res.content.trim() : ''
+      if (!nextValue) return
+
+      const current = Array.isArray(store.user.dislikes) ? [...store.user.dislikes] : []
+      if (current.includes(nextValue)) {
+        uni.showToast({ title: '已在清单里了', icon: 'none' })
+        return
+      }
+
+      const saved = await saveCurrentRoomUserPreferences({
+        dislikes: [...current, nextValue],
+        allergies: allergyTags.value,
+      })
+      if (saved) {
+        uni.showToast({ title: '已保存 ✅', icon: 'none' })
+      } else {
+        uni.showToast({ title: '保存失败，请重试', icon: 'none' })
       }
     }
   })
@@ -345,13 +398,24 @@ const addAllergy = () => {
     title: '添加过敏源',
     editable: true,
     placeholderText: '请输入过敏原',
-    success: (res) => {
-      if (res.confirm && res.content && res.content.trim()) {
-        const nextAllergy = res.content.trim()
-        const current = allergyTags.value
-        if (!current.includes(nextAllergy)) {
-          store.user.allergies = [...current, nextAllergy]
-        }
+    success: async (res) => {
+      const nextValue = res.confirm && res.content ? res.content.trim() : ''
+      if (!nextValue) return
+
+      const current = Array.isArray(store.user.allergies) ? [...store.user.allergies] : []
+      if (current.includes(nextValue)) {
+        uni.showToast({ title: '已在清单里了', icon: 'none' })
+        return
+      }
+
+      const saved = await saveCurrentRoomUserPreferences({
+        dislikes: store.user.dislikes,
+        allergies: [...current, nextValue],
+      })
+      if (saved) {
+        uni.showToast({ title: '已保存 ✅', icon: 'none' })
+      } else {
+        uni.showToast({ title: '保存失败，请重试', icon: 'none' })
       }
     }
   })
@@ -620,6 +684,7 @@ const doLogout = () => {
 
 /* 兑换券 */
 .coupon-card {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 28rpx;
@@ -629,6 +694,16 @@ const doLogout = () => {
   box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
   animation: fadeInUp 0.4s ease both;
   transition: transform 0.2s ease;
+}
+
+.coupon-card.redeemed {
+  background: #F7F8FA;
+  box-shadow: none;
+}
+
+.coupon-card.redeemed .coupon-icon-bg,
+.coupon-card.redeemed .coupon-info {
+  opacity: 0.56;
 }
 
 .coupon-card:active {
@@ -678,6 +753,10 @@ const doLogout = () => {
   background: #FF4D4F;
 }
 
+.coupon-btn.redeemed {
+  background: #E5E6EB;
+}
+
 .coupon-btn:active {
   transform: scale(0.92);
 }
@@ -690,6 +769,32 @@ const doLogout = () => {
 .coupon-btn-text.available {
   color: #FFFFFF;
   font-weight: bold;
+}
+
+.coupon-btn-text.redeemed {
+  color: #86909C;
+}
+
+.redeemed-stamp {
+  position: absolute;
+  top: 14rpx;
+  right: 18rpx;
+  width: 112rpx;
+  height: 58rpx;
+  border: 5rpx solid #F53F3F;
+  border-radius: 10rpx;
+  transform: rotate(12deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.38);
+  z-index: 2;
+}
+
+.redeemed-stamp-text {
+  font-size: 24rpx;
+  color: #F53F3F;
+  font-weight: 900;
 }
 
 /* 偏好设置卡片 */

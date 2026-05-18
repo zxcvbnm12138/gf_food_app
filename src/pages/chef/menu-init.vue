@@ -131,6 +131,16 @@
           </view>
 
           <view class="edit-field">
+            <text class="edit-label">绝对不吃关键词</text>
+            <textarea class="edit-textarea" v-model="editForm.dislikeKeywordsStr" :auto-height="true" maxlength="100" placeholder="例如：香菜,苦瓜,洋葱" />
+          </view>
+
+          <view class="edit-field">
+            <text class="edit-label">过敏关键词</text>
+            <textarea class="edit-textarea" v-model="editForm.allergyKeywordsStr" :auto-height="true" maxlength="100" placeholder="例如：花生,牛奶,坚果" />
+          </view>
+
+          <view class="edit-field">
             <text class="edit-label">价格文案</text>
             <input class="edit-input" v-model="editForm.price" placeholder="免费" />
           </view>
@@ -180,6 +190,8 @@ const editForm = ref({
   name: '',
   desc: '',
   fullDesc: '',
+  dislikeKeywordsStr: '',
+  allergyKeywordsStr: '',
   category: 'hot',
   emoji: '🍽️',
   image: '/static/logo.png',
@@ -207,6 +219,11 @@ const getCatEmoji = (cat) => store.categories.find(item => item.id === cat)?.emo
 const parseOptionList = (value) => (
   value
     ? value.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+    : []
+)
+const parseKeywordList = (value) => (
+  value
+    ? value.split(/[,，、;；\n]/).map(s => s.trim()).filter(Boolean)
     : []
 )
 const buildOptionGroups = (form) => {
@@ -248,6 +265,8 @@ const resetForm = () => {
     name: '',
     desc: '',
     fullDesc: '',
+    dislikeKeywordsStr: '',
+    allergyKeywordsStr: '',
     category: 'hot',
     emoji: '🍽️',
     image: '/static/logo.png',
@@ -286,6 +305,8 @@ const saveItem = async () => {
     name,
     desc: form.desc.trim() || fullDesc.slice(0, 40),
     fullDesc,
+    dislikeKeywords: parseKeywordList(form.dislikeKeywordsStr),
+    allergyKeywords: parseKeywordList(form.allergyKeywordsStr),
     category: form.category,
     emoji: getCatEmoji(form.category),
     image: form.image || '/static/logo.png',

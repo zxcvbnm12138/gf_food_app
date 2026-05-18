@@ -33,37 +33,53 @@
         <view
           v-for="(coupon, index) in coupons"
           :key="coupon.id"
-          class="coupon-card"
+          class="coupon-swipe"
           :style="{ animationDelay: (index * 0.06) + 's' }"
         >
-          <view class="coupon-head">
-            <view class="coupon-icon-bg" :style="{ background: coupon.color }">
-              <text class="coupon-emoji">{{ coupon.emoji }}</text>
-            </view>
-            <view class="coupon-info">
-              <text class="coupon-name">{{ coupon.name }}</text>
-              <text class="coupon-desc">{{ coupon.desc }}</text>
-            </view>
+          <view class="coupon-delete-action" @click.stop="deleteCoupon(coupon)">
+            <text class="coupon-delete-text">删除</text>
           </view>
-
-          <view class="progress-wrap">
-            <view class="progress-meta">
-              <text class="progress-text">{{ getProgressText(coupon) }}</text>
-              <text class="progress-percent">{{ getProgressPercent(coupon) }}%</text>
-            </view>
-            <view class="progress-track">
-              <view class="progress-fill" :style="{ width: getProgressPercent(coupon) + '%' }"></view>
-            </view>
-          </view>
-
           <view
-            class="coupon-btn"
-            :class="{ available: coupon.available }"
-            @click="redeemCoupon(coupon)"
+            class="coupon-card"
+            :class="{ redeemed: coupon.redeemed }"
+            :style="getSwipeStyle(coupon)"
+            @touchstart="onCouponTouchStart(coupon, $event)"
+            @touchmove="onCouponTouchMove(coupon, $event)"
+            @touchend="onCouponTouchEnd(coupon)"
+            @touchcancel="onCouponTouchEnd(coupon)"
           >
-            <text class="coupon-btn-text" :class="{ available: coupon.available }">
-              {{ coupon.available ? '立即兑换' : '继续投喂' }}
-            </text>
+            <view v-if="coupon.redeemed" class="redeemed-stamp">
+              <text class="redeemed-stamp-text">已兑换</text>
+            </view>
+            <view class="coupon-head">
+              <view class="coupon-icon-bg" :style="{ background: coupon.color }">
+                <text class="coupon-emoji">{{ coupon.emoji }}</text>
+              </view>
+              <view class="coupon-info">
+                <text class="coupon-name">{{ coupon.name }}</text>
+                <text class="coupon-desc">{{ coupon.desc }}</text>
+              </view>
+            </view>
+
+            <view class="progress-wrap">
+              <view class="progress-meta">
+                <text class="progress-text">{{ getProgressText(coupon) }}</text>
+                <text class="progress-percent" :class="{ redeemed: coupon.redeemed }">{{ getProgressPercent(coupon) }}%</text>
+              </view>
+              <view class="progress-track">
+                <view class="progress-fill" :class="{ redeemed: coupon.redeemed }" :style="{ width: getProgressPercent(coupon) + '%' }"></view>
+              </view>
+            </view>
+
+            <view
+              class="coupon-btn"
+              :class="{ available: coupon.available, redeemed: coupon.redeemed }"
+              @click="redeemCoupon(coupon)"
+            >
+              <text class="coupon-btn-text" :class="{ available: coupon.available, redeemed: coupon.redeemed }">
+                {{ getCouponButtonText(coupon) }}
+              </text>
+            </view>
           </view>
         </view>
 
@@ -128,7 +144,14 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import store, { loadOrdersFromCloud, refreshUserStats, addCustomCoupon, loadCustomCouponsFromCloud } from '@/store/index.js'
+import store, {
+  loadOrdersFromCloud,
+  refreshUserStats,
+  addCustomCoupon,
+  loadCustomCouponsFromCloud,
+  deleteCustomCouponFromCloud,
+  redeemCustomCouponInCloud,
+} from '@/store/index.js'
 
 const user = computed(() => store.user)
 const coupons = computed(() => store.coupons)
@@ -136,6 +159,12 @@ const availableCount = computed(() => coupons.value.filter(coupon => coupon.avai
 const showRedeem = ref(false)
 const showAddCoupon = ref(false)
 const redeemItem = ref({})
+const swipeOffsets = ref({})
+const touchState = ref({
+  couponId: '',
+  startX: 0,
+  startY: 0,
+})
 const couponEmojiOptions = ['🎁', '💆‍♀️', '🛍️', '🎬', '🧋', '🎮', '📝', '🍰', '🌙', '💝', '🚗', '⭐']
 const couponForm = ref({
   emoji: '🎁',
@@ -144,6 +173,7 @@ const couponForm = ref({
 })
 
 onShow(() => {
+  swipeOffsets.value = {}
   refreshUserStats()
   loadCustomCouponsFromCloud()
     .then(() => refreshUserStats())
@@ -158,17 +188,76 @@ onShow(() => {
 })
 
 const getProgressPercent = (coupon) => {
+  if (coupon.redeemed) return 100
   if (!coupon.required) return 100
   return Math.min(100, Math.round((user.value.feedCount / coupon.required) * 100))
 }
 
 const getProgressText = (coupon) => {
+  if (coupon.redeemed) return '已兑换'
   if (coupon.available) return '已达成兑换条件'
   const remaining = Math.max(0, coupon.required - user.value.feedCount)
   return `还差 ${remaining} 次投喂`
 }
 
+const getCouponButtonText = (coupon) => {
+  if (coupon.redeemed) return '已兑换'
+  return coupon.available ? '立即兑换' : '继续投喂'
+}
+
+const getSwipeStyle = (coupon) => ({
+  transform: `translateX(${swipeOffsets.value[coupon.id] || 0}rpx)`,
+})
+
+const closeOtherSwipes = (couponId = '') => {
+  const nextOffsets = {}
+  Object.keys(swipeOffsets.value).forEach((id) => {
+    nextOffsets[id] = id === couponId ? swipeOffsets.value[id] : 0
+  })
+  swipeOffsets.value = nextOffsets
+}
+
+const onCouponTouchStart = (coupon, event) => {
+  const touch = event.touches && event.touches[0]
+  if (!touch) return
+  touchState.value = {
+    couponId: coupon.id,
+    startX: touch.clientX,
+    startY: touch.clientY,
+  }
+  closeOtherSwipes(coupon.id)
+}
+
+const onCouponTouchMove = (coupon, event) => {
+  const touch = event.touches && event.touches[0]
+  if (!touch || touchState.value.couponId !== coupon.id) return
+
+  const deltaX = touch.clientX - touchState.value.startX
+  const deltaY = touch.clientY - touchState.value.startY
+  if (Math.abs(deltaY) > Math.abs(deltaX)) return
+
+  if (deltaX < -24) {
+    swipeOffsets.value = { ...swipeOffsets.value, [coupon.id]: -160 }
+  } else if (deltaX > 24) {
+    swipeOffsets.value = { ...swipeOffsets.value, [coupon.id]: 0 }
+  }
+}
+
+const onCouponTouchEnd = (coupon) => {
+  if (touchState.value.couponId !== coupon.id) return
+  touchState.value = { couponId: '', startX: 0, startY: 0 }
+}
+
 const redeemCoupon = (coupon) => {
+  closeOtherSwipes()
+  if (coupon.redeemed) {
+    uni.showToast({
+      title: '已经兑换过啦',
+      icon: 'none',
+      duration: 1500,
+    })
+    return
+  }
   if (!coupon.available) {
     uni.showToast({
       title: getProgressText(coupon),
@@ -181,12 +270,57 @@ const redeemCoupon = (coupon) => {
   showRedeem.value = true
 }
 
-const confirmRedeem = () => {
-  showRedeem.value = false
-  uni.showToast({
-    title: '兑换成功！',
-    icon: 'none',
-    duration: 2000,
+const confirmRedeem = async () => {
+  const coupon = redeemItem.value
+  if (!coupon || !coupon.id) return
+
+  uni.showLoading({ title: '兑换中...', mask: true })
+  try {
+    const redeemed = await redeemCustomCouponInCloud(coupon)
+    uni.hideLoading()
+    showRedeem.value = false
+    if (!redeemed) {
+      uni.showToast({ title: '兑换失败，请重试', icon: 'none' })
+      return
+    }
+    uni.showToast({
+      title: '兑换成功！',
+      icon: 'none',
+      duration: 2000,
+    })
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: '兑换失败，请重试', icon: 'none' })
+  }
+}
+
+const deleteCoupon = (coupon) => {
+  uni.showModal({
+    title: '删除兑换券',
+    content: `确定删除「${coupon.name}」吗？`,
+    confirmText: '删除',
+    confirmColor: '#FF4D4F',
+    success: async (res) => {
+      if (!res.confirm) {
+        closeOtherSwipes()
+        return
+      }
+      uni.showLoading({ title: '删除中...', mask: true })
+      try {
+        const success = await deleteCustomCouponFromCloud(coupon)
+        uni.hideLoading()
+        closeOtherSwipes()
+        if (!success) {
+          uni.showToast({ title: '删除失败，请重试', icon: 'none' })
+          return
+        }
+        uni.showToast({ title: '已删除', icon: 'none' })
+      } catch (e) {
+        uni.hideLoading()
+        closeOtherSwipes()
+        uni.showToast({ title: '删除失败，请重试', icon: 'none' })
+      }
+    },
   })
 }
 
@@ -405,7 +539,35 @@ const goBack = () => {
   font-weight: bold;
 }
 
+.coupon-swipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: 30rpx;
+  animation: fadeInUp 0.4s ease both;
+}
+
+.coupon-delete-action {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 160rpx;
+  background: #FF4D4F;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 0;
+}
+
+.coupon-delete-text {
+  font-size: 28rpx;
+  color: #FFFFFF;
+  font-weight: bold;
+}
+
 .coupon-card {
+  position: relative;
+  z-index: 1;
   background: #FFFFFF;
   border-radius: 30rpx;
   padding: 32rpx;
@@ -414,7 +576,19 @@ const goBack = () => {
   display: flex;
   flex-direction: column;
   gap: 26rpx;
-  animation: fadeInUp 0.4s ease both;
+  transition: transform 0.22s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.coupon-card.redeemed {
+  background: #F7F8FA;
+  border-color: #E5E6EB;
+  box-shadow: none;
+}
+
+.coupon-card.redeemed .coupon-icon-bg,
+.coupon-card.redeemed .coupon-info,
+.coupon-card.redeemed .progress-wrap {
+  opacity: 0.56;
 }
 
 .coupon-head {
@@ -478,6 +652,10 @@ const goBack = () => {
   font-weight: bold;
 }
 
+.progress-percent.redeemed {
+  color: #86909C;
+}
+
 .progress-track {
   height: 12rpx;
   border-radius: 6rpx;
@@ -490,6 +668,10 @@ const goBack = () => {
   border-radius: 6rpx;
   background: linear-gradient(90deg, #FF4D4F, #FF8C9A);
   transition: width 0.3s ease;
+}
+
+.progress-fill.redeemed {
+  background: #C9CDD4;
 }
 
 .coupon-btn {
@@ -506,6 +688,10 @@ const goBack = () => {
   background: #FF4D4F;
 }
 
+.coupon-btn.redeemed {
+  background: #E5E6EB;
+}
+
 .coupon-btn:active {
   transform: scale(0.96);
 }
@@ -518,6 +704,32 @@ const goBack = () => {
 
 .coupon-btn-text.available {
   color: #FFFFFF;
+}
+
+.coupon-btn-text.redeemed {
+  color: #86909C;
+}
+
+.redeemed-stamp {
+  position: absolute;
+  top: 20rpx;
+  right: 24rpx;
+  width: 128rpx;
+  height: 72rpx;
+  border: 5rpx solid #F53F3F;
+  border-radius: 12rpx;
+  transform: rotate(12deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.36);
+  z-index: 2;
+}
+
+.redeemed-stamp-text {
+  font-size: 28rpx;
+  color: #F53F3F;
+  font-weight: 900;
 }
 
 .bottom-spacer {

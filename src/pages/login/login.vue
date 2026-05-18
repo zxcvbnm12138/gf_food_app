@@ -242,7 +242,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { setRole, setLoginState, setRoomId, clearRoomId, getChefEntryUrl } from '@/store/index.js'
+import { setRole, setLoginState, setRoomId, clearRoomId, getChefEntryUrl, loadCurrentRoomUserPreferences } from '@/store/index.js'
 import {
   wxLogin, checkLogin,
   createRoom, joinRoom,
@@ -332,6 +332,9 @@ const handleCreateRoom = async () => {
       createdRoomId.value = result.roomId
       currentRoomId.value = result.roomId
       setRoomId(result.roomId)
+      loadCurrentRoomUserPreferences().catch((e) => {
+        console.warn('[Login] 初始化房间偏好失败', e)
+      })
       showCreatedRoom.value = true
       step.value = -1 // 隐藏 step 1 内容
     } else {
@@ -362,6 +365,9 @@ const enterRoom = async (roomId) => {
     if (result.success) {
       currentRoomId.value = normalizeRoomId(result.roomInfo?.roomId || normalizedRoomId)
       setRoomId(currentRoomId.value)
+      loadCurrentRoomUserPreferences().catch((e) => {
+        console.warn('[Login] 初始化房间偏好失败', e)
+      })
       showHistoryRooms.value = false
       uni.showToast({ title: '加入成功 🎉', icon: 'none', duration: 1000 })
       setTimeout(() => { step.value = 2 }, 500)

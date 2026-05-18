@@ -59,6 +59,7 @@
                 <text class="pending-count">{{ order.totalCount }} 件</text>
               </view>
               <text v-if="order.note" class="pending-note">💌 {{ order.note }}</text>
+              <text v-if="order.riskWarnings && order.riskWarnings.length" class="pending-risk">⚠️ {{ formatRiskWarnings(order.riskWarnings) }}</text>
               <view class="pending-actions"><view class="accept-btn" @click.stop="handleAccept(order.id)"><text class="accept-btn-text">立即接单</text></view></view>
             </view>
           </view>
@@ -78,7 +79,7 @@
 <script setup>
 import { computed, onUnmounted } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud, getChefEntryUrl } from '@/store/index.js'
+import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud, getChefEntryUrl, formatCartRiskWarnings } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const chef = computed(() => store.chef)
 const currentRoomId = computed(() => store.roomId || '未加入房间')
@@ -145,6 +146,7 @@ const statItems = computed(() => [
 const recentPending = computed(() => getOrdersByStatus('pending').slice(0, 3))
 const fmtTime = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` }
 const orderSummary = (order) => order.items.map(i => i.name).slice(0, 3).join('、')
+const formatRiskWarnings = (warnings) => formatCartRiskWarnings(warnings)
 const handleAccept = async (id) => {
   const success = await acceptOrder(id)
   if (success) {
@@ -220,6 +222,7 @@ const copyRoomId = () => {
 .pending-items-text { font-size: 26rpx; color: #4E5969; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-count { font-size: 24rpx; font-weight: bold; color: #FF4D4F; flex-shrink: 0; }
 .pending-note { font-size: 22rpx; color: #86909C; line-height: 1.5; }
+.pending-risk { font-size: 22rpx; color: #D4380D; line-height: 1.5; padding: 12rpx 16rpx; background: #FFF2E8; border-radius: 16rpx; }
 .pending-actions { display: flex; justify-content: flex-end; }
 .accept-btn { padding: 16rpx 40rpx; border-radius: 32rpx; background: #4080FF; box-shadow: 0 8rpx 24rpx rgba(64,128,255,0.25); transition: transform 0.2s ease; }
 .accept-btn:active { transform: scale(0.92); }

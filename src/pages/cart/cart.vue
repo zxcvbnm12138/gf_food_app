@@ -108,13 +108,29 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import store, { updateCartQty, removeFromCart, getCartTotal, createOrderFromCart, formatOrderItemOptions } from '@/store/index.js'
+import { onShow } from '@dcloudio/uni-app'
+import store, {
+  updateCartQty,
+  removeFromCart,
+  getCartTotal,
+  createOrderFromCart,
+  formatOrderItemOptions,
+  getCartRiskWarnings,
+  formatCartRiskWarnings,
+  loadCurrentRoomUserPreferences,
+} from '@/store/index.js'
 
 const showOrderSuccess = ref(false)
 const progressWidth = ref(0)
 
 const cartItems = computed(() => store.cart)
 const totalCount = computed(() => getCartTotal())
+
+onShow(async () => {
+  await loadCurrentRoomUserPreferences().catch((e) => {
+    console.warn('[Cart] 刷新房间偏好失败', e)
+  })
+})
 
 const getOptionsText = (item) => {
   return formatOrderItemOptions(item)
@@ -137,7 +153,30 @@ const removeItem = (index) => {
   })
 }
 
+const confirmRiskWarnings = (warnings) => new Promise((resolve) => {
+  const summary = formatCartRiskWarnings(warnings)
+  uni.showModal({
+    title: '发现忌口 / 过敏提醒',
+    content: summary ? `${summary}\n\n是否仍要继续下单？` : '当前订单命中忌口 / 过敏提醒，是否仍要继续下单？',
+    confirmText: '继续下单',
+    cancelText: '先返回',
+    confirmColor: '#FF4D4F',
+    success: (res) => {
+      resolve(!!res.confirm)
+    },
+    fail: () => {
+      resolve(false)
+    },
+  })
+})
+
 const handleSubmit = async () => {
+  const warnings = getCartRiskWarnings()
+  if (warnings.length > 0) {
+    const confirmed = await confirmRiskWarnings(warnings)
+    if (!confirmed) return
+  }
+
   const order = await createOrderFromCart()
   if (!order) return
   showOrderSuccess.value = true

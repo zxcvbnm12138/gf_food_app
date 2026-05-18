@@ -1,5 +1,5 @@
 <script>
-import { getRole, getRoomId, getChefEntryUrl } from '@/store/index.js'
+import { getRole, getRoomId, getChefEntryUrl, loadCurrentRoomUserPreferences } from '@/store/index.js'
 import { initCloud, checkLogin } from '@/services/cloud.js'
 
 export default {
@@ -17,6 +17,9 @@ export default {
     const roomId = getRoomId()
 
     if (loginData && loginData.openid && role && roomId) {
+      loadCurrentRoomUserPreferences().catch((e) => {
+        console.warn('[App] 初始化房间偏好失败', e)
+      })
       // 已登录 + 有房间 + 有角色，跳转到对应端
       if (role === 'customer') {
         uni.switchTab({ url: '/pages/index/index' })
