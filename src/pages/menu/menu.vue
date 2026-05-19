@@ -101,8 +101,7 @@ import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import store, {
   addToCart,
   getCartTotal,
-  loadMenuFromCloud,
-  loadMenuCategoriesFromCloud,
+  loadMenuSnapshotFromCloud,
   getAvailableItems,
   getMenuItemOptionGroups,
   startMenuRealtimeSync,
@@ -133,13 +132,10 @@ const getBriefDesc = (item) => item.desc || ''
 
 // 菜品轮询刷新
 let menuPollTimer = null
-const MENU_POLL_INTERVAL = 5000 // 实时监听失败时，5秒轮询兜底
+const MENU_FALLBACK_POLL_INTERVAL = 60 * 1000 // 实时监听主同步，低频轮询只做兜底
 
 const refreshMenu = async () => {
-  await Promise.all([
-    loadMenuFromCloud(),
-    loadMenuCategoriesFromCloud(),
-  ])
+  await loadMenuSnapshotFromCloud()
 }
 
 const selectCategoryById = (categoryId) => {
@@ -182,7 +178,7 @@ onShow(() => {
   refreshMenu()
   startMenuRealtimeSync(MENU_REALTIME_OWNER)
   if (!menuPollTimer) {
-    menuPollTimer = setInterval(refreshMenu, MENU_POLL_INTERVAL)
+    menuPollTimer = setInterval(refreshMenu, MENU_FALLBACK_POLL_INTERVAL)
   }
 })
 

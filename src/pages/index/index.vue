@@ -210,8 +210,7 @@
 import { ref, computed } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
 import store, {
-  loadMenuFromCloud,
-  loadMenuCategoriesFromCloud,
+  loadMenuSnapshotFromCloud,
   getAvailableItems,
   loadOrdersFromCloud,
   getCurrentRoomOrders,
@@ -245,14 +244,11 @@ const mealSlots = [
 // 菜品轮询刷新
 let menuPollTimer = null
 let ordersPollTimer = null
-const MENU_POLL_INTERVAL = 5000 // 实时监听失败时，5秒轮询兜底
-const ORDERS_POLL_INTERVAL = 5000
+const MENU_FALLBACK_POLL_INTERVAL = 60 * 1000 // 实时监听主同步，低频轮询只做兜底
+const INSIGHTS_POLL_INTERVAL = 60 * 1000
 
 const refreshMenu = async () => {
-  await Promise.all([
-    loadMenuFromCloud(),
-    loadMenuCategoriesFromCloud(),
-  ])
+  await loadMenuSnapshotFromCloud()
 }
 
 const refreshInsights = async () => {
@@ -292,10 +288,10 @@ onShow(() => {
   refreshInsights()
   startMenuRealtimeSync(MENU_REALTIME_OWNER)
   if (!menuPollTimer) {
-    menuPollTimer = setInterval(refreshMenu, MENU_POLL_INTERVAL)
+    menuPollTimer = setInterval(refreshMenu, MENU_FALLBACK_POLL_INTERVAL)
   }
   if (!ordersPollTimer) {
-    ordersPollTimer = setInterval(refreshInsightOrders, ORDERS_POLL_INTERVAL)
+    ordersPollTimer = setInterval(refreshInsightOrders, INSIGHTS_POLL_INTERVAL)
   }
 })
 

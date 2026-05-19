@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import {
   fetchMenuItems as cloudFetchMenuItems,
   fetchMenuCategories as cloudFetchMenuCategories,
+  fetchMenuSnapshot as cloudFetchMenuSnapshot,
   addMenuCategory as cloudAddMenuCategory,
   deleteMenuCategory as cloudDeleteMenuCategory,
   fetchCustomCoupons as cloudFetchCustomCoupons,
@@ -830,13 +831,31 @@ async function applyCloudMenuItems(items, source = 'fetch', shouldAssign = true)
 /**
  * 从云端加载菜品到 store
  */
-export async function loadMenuFromCloud() {
+export async function loadMenuFromCloud(source = 'fetch') {
   try {
     const items = await cloudFetchMenuItems(store.roomId)
-    return await applyCloudMenuItems(items, 'fetch')
+    return await applyCloudMenuItems(items, source)
   } catch (e) {
     console.error('[Store] 加载菜品失败:', e)
     return store.menuItems
+  }
+}
+
+export async function loadMenuSnapshotFromCloud(source = 'fetch') {
+  try {
+    const snapshot = await cloudFetchMenuSnapshot(store.roomId)
+    setStoreCategories(snapshot.categories)
+    const items = await applyCloudMenuItems(snapshot.items, source)
+    return {
+      items,
+      categories: store.categories,
+    }
+  } catch (e) {
+    console.error('[Store] 加载菜单快照失败:', e)
+    return {
+      items: store.menuItems,
+      categories: store.categories,
+    }
   }
 }
 
@@ -870,9 +889,10 @@ export function startMenuRealtimeSync(owner = 'default') {
     async () => {
       const seq = ++menuRealtimeSeq
       try {
-        const items = await cloudFetchMenuItems(store.roomId)
-        const appliedItems = await applyCloudMenuItems(items, 'room-watch', false)
+        const snapshot = await cloudFetchMenuSnapshot(store.roomId)
+        const appliedItems = await applyCloudMenuItems(snapshot.items, 'room-watch', false)
         if (seq === menuRealtimeSeq) {
+          setStoreCategories(snapshot.categories)
           store.menuItems = appliedItems
         }
       } catch (e) {

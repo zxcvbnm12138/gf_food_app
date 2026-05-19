@@ -195,6 +195,31 @@ async function getCustomCoupons(roomId) {
     })
 }
 
+async function getMenuItems(roomId, rawRoomId = roomId) {
+  const roomIds = Array.from(new Set([rawRoomId, roomId].filter(Boolean)))
+  const query = roomIds.length > 1 ? { roomId: _.in(roomIds) } : { roomId }
+  const countRes = await db.collection('menu_items').where(query).count()
+  const total = countRes.total
+  if (total === 0) return []
+
+  const batchTimes = Math.ceil(total / 100)
+  const tasks = []
+  for (let i = 0; i < batchTimes; i++) {
+    tasks.push(
+      db.collection('menu_items')
+        .where(query)
+        .skip(i * 100)
+        .limit(100)
+        .get()
+    )
+  }
+
+  const results = await Promise.all(tasks)
+  return results
+    .reduce((all, result) => all.concat(result.data || []), [])
+    .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
+}
+
 exports.main = async (event, context) => {
   const wxContext = cloud.getWXContext()
   const rawRoomId = event.roomId ? String(event.roomId).trim() : ''
@@ -220,31 +245,15 @@ exports.main = async (event, context) => {
       return { success: true, coupons }
     }
 
-    const roomIds = Array.from(new Set([rawRoomId, roomId].filter(Boolean)))
-    const query = roomIds.length > 1 ? { roomId: _.in(roomIds) } : { roomId }
-    const countRes = await db.collection('menu_items').where(query).count()
-    const total = countRes.total
-    if (total === 0) {
-      return { success: true, items: [] }
+    if (event.action === 'getSnapshot') {
+      const [items, categories] = await Promise.all([
+        getMenuItems(roomId, rawRoomId),
+        getCategories(roomId),
+      ])
+      return { success: true, items, categories }
     }
 
-    const batchTimes = Math.ceil(total / 100)
-    const tasks = []
-    for (let i = 0; i < batchTimes; i++) {
-      tasks.push(
-        db.collection('menu_items')
-          .where(query)
-          .skip(i * 100)
-          .limit(100)
-          .get()
-      )
-    }
-
-    const results = await Promise.all(tasks)
-    const items = results
-      .reduce((all, result) => all.concat(result.data || []), [])
-      .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
-
+    const items = await getMenuItems(roomId, rawRoomId)
     return { success: true, items }
   } catch (e) {
     console.error('获取菜品失败:', e)

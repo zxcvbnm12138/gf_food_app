@@ -1185,6 +1185,56 @@ export async function fetchMenuCategories(roomId) {
   }
 }
 
+export async function fetchMenuSnapshot(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    // #ifdef MP-WEIXIN
+    console.warn('[Cloud] 微信云环境不可用，返回空菜单快照')
+    return { items: [], categories: getDefaultMenuCategories() }
+    // #endif
+    return {
+      items: getDefaultMenuItems(),
+      categories: getDefaultMenuCategories(),
+    }
+  }
+
+  if (!roomId) {
+    return {
+      items: getDefaultMenuItems(),
+      categories: getDefaultMenuCategories(),
+    }
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'getMenuItems',
+      data: {
+        action: 'getSnapshot',
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && Array.isArray(res.result.categories)) {
+      return {
+        items: Array.isArray(res.result.items) ? res.result.items : [],
+        categories: normalizeCategories(res.result.categories),
+      }
+    }
+    if (isCloudAccessDeniedResult(res.result)) {
+      return { items: [], categories: [] }
+    }
+    console.warn('[Cloud] 云函数获取菜单快照返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数获取菜单快照失败，回退到分项查询:', e.message || e)
+  }
+
+  const [items, categories] = await Promise.all([
+    fetchMenuItems(roomId),
+    fetchMenuCategories(roomId),
+  ])
+  return { items, categories }
+}
+
 export async function addMenuCategory(categoryData, roomId) {
   roomId = normalizeRoomId(roomId)
   const name = String(categoryData?.name || '').trim()
