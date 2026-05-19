@@ -17,3 +17,23 @@
 为降低生产环境云函数调用量，菜单兜底轮询调整为 60 秒低频刷新；首页订单洞察也从 5 秒刷新调整为 60 秒刷新，减少非关键页面的订单同步调用。同时为 `getMenuItems` 云函数新增 `getSnapshot` 动作，一次请求即可返回菜品和分类，客户端保留旧分项查询回退，避免云函数尚未部署新版时影响现有菜单显示。
 
 验证记录：已通过 `node --check cloudfunctions/getMenuItems/index.js`、`npm run build:h5`、`npm run build:mp-weixin`。上线时需要重新部署 `getMenuItems` 云函数，使 `getSnapshot` 快照接口在生产环境生效。
+
+## 第三次归档
+
+归档日期：2026-05-19
+
+本次归档用于在清理本地硬盘前确认项目可从远程仓库恢复。项目当前包含点餐端、主厨端、房间隔离、菜单管理、订单流转、用户偏好避雷、特权兑换券、首页投喂洞察、菜单实时同步优化和云函数调用降频等现阶段功能。
+
+远程仓库：`https://github.com/zxcvbnm12138/gf_food_app.git`
+
+归档分支：`master`
+
+恢复方式：
+
+```bash
+git clone https://github.com/zxcvbnm12138/gf_food_app.git
+cd gf_food_app
+npm install
+```
+
+恢复后如需运行微信小程序端，需要重新确认微信云开发环境和云函数部署状态。
