@@ -3,6 +3,9 @@
     <view class="status-bar"></view>
 
     <view class="top-header">
+      <view class="back-btn" @click="goBack">
+        <text class="back-arrow">‹</text>
+      </view>
       <view class="title-wrap">
         <text class="page-title">初始化菜单</text>
         <text class="page-subtitle">房间 {{ store.roomId }}</text>
@@ -35,7 +38,8 @@
             :style="{ animationDelay: (idx * 0.06) + 's' }"
           >
             <view class="menu-img">
-              <image class="menu-photo" :src="item.image || '/static/logo.png'" mode="aspectFill" />
+              <image v-if="item.image" class="menu-photo" :src="item.image" mode="aspectFill" />
+              <text v-else class="menu-photo-emoji">{{ item.emoji || '🍽️' }}</text>
             </view>
             <view class="menu-info">
               <view class="menu-top-row">
@@ -109,7 +113,11 @@
           <view class="edit-field">
             <text class="edit-label">菜品图片</text>
             <view class="image-upload-area" @click="chooseAndUploadImage">
-              <image class="upload-preview" :src="editForm.imagePreview || editForm.image || '/static/logo.png'" mode="aspectFill" />
+              <image v-if="editForm.imagePreview || editForm.image" class="upload-preview" :src="editForm.imagePreview || editForm.image" mode="aspectFill" />
+              <view v-else class="upload-placeholder">
+                <text class="upload-icon">📷</text>
+                <text class="upload-hint">点击上传图片</text>
+              </view>
               <view class="upload-overlay" v-if="isUploading">
                 <view class="upload-spinner"></view>
                 <text class="upload-progress-text">上传中...</text>
@@ -194,7 +202,7 @@ const editForm = ref({
   allergyKeywordsStr: '',
   category: 'hot',
   emoji: '🍽️',
-  image: '/static/logo.png',
+  image: '',
   imagePreview: '',
   price: '免费',
   optionGroup1Label: '甜度',
@@ -250,10 +258,13 @@ onMounted(async () => {
   }
 
   isLoading.value = true
-  await Promise.all([
-    loadMenuFromCloud(),
-    loadMenuCategoriesFromCloud(),
-  ])
+  // 如果 login 页的 getChefEntryUrl 已经加载过菜品，则跳过重复 fetch
+  const tasks = []
+  if (!store.menuLoaded) {
+    tasks.push(loadMenuFromCloud())
+  }
+  tasks.push(loadMenuCategoriesFromCloud())
+  await Promise.all(tasks)
   isLoading.value = false
   if (menuItems.value.length === 0) {
     openAdd()
@@ -269,7 +280,7 @@ const resetForm = () => {
     allergyKeywordsStr: '',
     category: 'hot',
     emoji: '🍽️',
-    image: '/static/logo.png',
+    image: '',
     imagePreview: '',
     price: '免费',
     optionGroup1Label: '甜度',
@@ -309,7 +320,7 @@ const saveItem = async () => {
     allergyKeywords: parseKeywordList(form.allergyKeywordsStr),
     category: form.category,
     emoji: getCatEmoji(form.category),
-    image: form.image || '/static/logo.png',
+    image: form.image || '',
     price: form.price || '免费',
     available: true,
     optionGroups,
@@ -416,6 +427,15 @@ const createCategory = async () => {
   }
 }
 
+const goBack = () => {
+  const pages = getCurrentPages()
+  if (pages.length > 1) {
+    uni.navigateBack()
+  } else {
+    uni.switchTab({ url: '/pages/chef/dashboard' })
+  }
+}
+
 const finishInit = () => {
   if (!canEnter.value) {
     uni.showToast({ title: '请先添加至少一道菜品', icon: 'none' })
@@ -428,7 +448,10 @@ const finishInit = () => {
 <style scoped>
 .page { display: flex; flex-direction: column; height: 100vh; background: #F7F8FA; overflow: hidden; }
 .status-bar { height: var(--status-bar-height, 44px); width: 100%; background: #FFFFFF; }
-.top-header { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 40rpx 20rpx; background: #FFFFFF; }
+.top-header { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 40rpx 20rpx; background: #FFFFFF; gap: 20rpx; }
+.back-btn { width: 64rpx; height: 64rpx; border-radius: 32rpx; background: #F2F3F5; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: transform 0.2s ease; }
+.back-btn:active { transform: scale(0.92); }
+.back-arrow { font-size: 48rpx; line-height: 1; color: #1D2129; }
 .title-wrap { display: flex; flex-direction: column; gap: 8rpx; min-width: 0; }
 .page-title { font-size: 40rpx; font-weight: bold; color: #1D2129; }
 .page-subtitle { font-size: 24rpx; color: #86909C; letter-spacing: 2rpx; font-family: 'Courier New', monospace; }
@@ -445,6 +468,7 @@ const finishInit = () => {
 .menu-card { display: flex; gap: 24rpx; background: #FFFFFF; border-radius: 28rpx; padding: 28rpx; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.04); animation: fadeInUp 0.4s ease both; }
 .menu-img { width: 140rpx; height: 140rpx; border-radius: 20rpx; overflow: hidden; flex-shrink: 0; background: #FFF7E6; }
 .menu-photo { width: 100%; height: 100%; }
+.menu-photo-emoji { font-size: 56rpx; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 .menu-info { flex: 1; display: flex; flex-direction: column; gap: 14rpx; min-width: 0; }
 .menu-top-row { display: flex; justify-content: space-between; align-items: center; gap: 16rpx; }
 .menu-name { flex: 1; font-size: 30rpx; font-weight: bold; color: #1D2129; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -485,6 +509,9 @@ const finishInit = () => {
 .create-category-btn.disabled { opacity: 0.6; }
 .create-category-text { font-size: 26rpx; color: #FFFFFF; font-weight: bold; }
 .image-upload-area { position: relative; width: 100%; height: 260rpx; border-radius: 20rpx; overflow: hidden; background: #F7F8FA; border: 2rpx dashed #C9CDD4; box-sizing: border-box; }
+.upload-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12rpx; }
+.upload-icon { font-size: 56rpx; }
+.upload-hint { font-size: 24rpx; color: #86909C; }
 .upload-preview { width: 100%; height: 100%; }
 .upload-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12rpx; }
 .upload-spinner { border-color: rgba(255,255,255,0.3); border-top-color: #FFFFFF; }

@@ -78,28 +78,19 @@
 </template>
 
 <script setup>
-import { computed, onUnmounted } from 'vue'
+import { computed } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, loadOrdersFromCloud, getChefEntryUrl, formatCartRiskWarnings } from '@/store/index.js'
+import store, { acceptOrder, getOrdersByStatus, getTodayOrders, setRole, startChefOrdersSync, stopChefOrdersSync, getChefEntryUrl, formatCartRiskWarnings } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 import { getDailyLovePoem } from '@/utils/lovePoems.js'
 const chef = computed(() => store.chef)
 const currentRoomId = computed(() => store.roomId || '未加入房间')
 const dailyLovePoem = computed(() => getDailyLovePoem())
 
-// 页面显示时刷新云端订单
-let pollTimer = null
-const refreshOrders = async () => {
-  try {
-    await loadOrdersFromCloud()
-  } catch (e) {
-    console.warn('[ChefDashboard] 刷新订单失败', e)
-  }
-}
-
 const ensureMenuReady = async () => {
+  if (store.menuLoaded) return
   try {
-    const url = await getChefEntryUrl({ forceRefresh: true })
+    const url = await getChefEntryUrl()
     if (url === '/pages/chef/menu-init') {
       uni.redirectTo({ url })
     }
@@ -108,33 +99,15 @@ const ensureMenuReady = async () => {
   }
 }
 
-const startPolling = () => {
-  refreshOrders()
-  if (!pollTimer) {
-    pollTimer = setInterval(refreshOrders, 5000)
-  }
-}
-
-const stopPolling = () => {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-// onShow: 每次页面可见时立即刷新 + 启动轮询
+// onShow: 启动实时同步（watch + 5分钟兜底轮询）
 onShow(() => {
   ensureMenuReady()
-  startPolling()
+  startChefOrdersSync('chef-dashboard')
 })
 
-// onHide: 页面隐藏时停止轮询，节省资源
+// onHide: 停止同步，释放 watch 连接
 onHide(() => {
-  stopPolling()
-})
-
-onUnmounted(() => {
-  stopPolling()
+  stopChefOrdersSync('chef-dashboard')
 })
 const greetingText = computed(() => { const h = new Date().getHours(); if (h < 6) return '夜深了大厨'; if (h < 11) return '早安大厨'; if (h < 14) return '午安大厨'; if (h < 18) return '下午好大厨'; return '晚上好大厨' })
 const pendingCount = computed(() => getOrdersByStatus('pending').length)

@@ -33,6 +33,7 @@ import {
   migrateLocalImagesToCloud,
   watchMenuItems as cloudWatchMenuItems,
   watchRoomMenuVersion as cloudWatchRoomMenuVersion,
+  watchOrders as cloudWatchOrders,
   normalizeRoomId,
   setLocalMenuItemAvailability,
   fetchRoomUserPreferences as cloudFetchRoomUserPreferences,
@@ -51,16 +52,22 @@ const LEGACY_ORDERS_ROOM_KEY = '__legacy__'
 
 // 正在进行云端操作的订单ID集合（操作锁）
 const pendingOperations = new Set()
-const CHEF_ORDERS_POLL_INTERVAL = 5000
+const CHEF_ORDERS_POLL_INTERVAL = 15000
+const CHEF_ORDERS_POLL_FALLBACK_INTERVAL = 300000 // watch 成功时的兜底轮询间隔：5分钟
 let menuRealtimeWatcher = null
 let menuRoomVersionWatcher = null
 let menuRealtimeRoomId = ''
 let menuRealtimeSeq = 0
 let isMenuMigrationRunning = false
+let lastMigrationTime = 0
 const menuRealtimeOwners = new Set()
 let chefOrdersPollTimer = null
 let chefOrdersPollInFlight = false
 const chefOrdersSyncOwners = new Set()
+let orderRealtimeWatcher = null
+let orderRealtimeRoomId = ''
+let orderRealtimeSeq = 0
+const orderRealtimeOwners = new Set()
 const defaultMenuCategories = getDefaultMenuCategories()
 
 // 状态优先级：只允许前进，不允许回退
@@ -799,17 +806,22 @@ export async function deleteMenuCategoryFromCloud(categoryId, fallbackCategoryId
 
 // ========== 菜品云端操作 ==========
 
-async function applyCloudMenuItems(items, source = 'fetch', shouldAssign = true) {
-  // 检查是否有本地图片路径需要迁移
-  const hasLocalImages = items.some(item => item.image && item.image.startsWith('/static/'))
+async function applyCloudMenuItems(items, source = 'fetch', shouldAssign = true, skipMigrationCheck = false) {
+  // 检查是否有本地图片路径需要迁移（跳过迁移后的重加载，避免死循环）
+  // 迁移完成后设置冷却期，防止短时间内反复迁移
+  const migrationCooldownMs = 5 * 60 * 1000
+  const now = Date.now()
+  const inCooldown = lastMigrationTime > 0 && (now - lastMigrationTime) < migrationCooldownMs
+  const hasLocalImages = !skipMigrationCheck && !inCooldown && items.some(item => item.image && item.image.startsWith('/static/'))
   if (hasLocalImages && isCloudAvailable() && !isMenuMigrationRunning) {
     console.log('[Store] 检测到本地图片路径，开始自动迁移到云存储...')
     isMenuMigrationRunning = true
     migrateLocalImagesToCloud(store.roomId).then(result => {
+      lastMigrationTime = Date.now()
       if (result.migrated > 0) {
         console.log(`[Store] 图片迁移完成: ${result.migrated} 张成功`)
-        // 迁移完成后重新加载
-        loadMenuFromCloud()
+        // 迁移完成后重新加载（标记跳过迁移检查，防止循环）
+        loadMenuFromCloud('migration-reload', true)
       }
     }).catch(e => {
       console.warn('[Store] 图片迁移异常:', e)
@@ -831,10 +843,10 @@ async function applyCloudMenuItems(items, source = 'fetch', shouldAssign = true)
 /**
  * 从云端加载菜品到 store
  */
-export async function loadMenuFromCloud(source = 'fetch') {
+export async function loadMenuFromCloud(source = 'fetch', skipMigrationCheck = false) {
   try {
     const items = await cloudFetchMenuItems(store.roomId)
-    return await applyCloudMenuItems(items, source)
+    return await applyCloudMenuItems(items, source, true, skipMigrationCheck)
   } catch (e) {
     console.error('[Store] 加载菜品失败:', e)
     return store.menuItems
@@ -1051,13 +1063,26 @@ async function syncChefOrdersFromCloud() {
   }
 }
 
+/**
+ * 启动主厨端订单同步。
+ * 优先使用 collection.watch() 实时推送（零云函数消耗）；
+ * watch 成功时仍保留 5 分钟轮询作为兜底；
+ * watch 不可用时使用 15 秒轮询。
+ * 注意：此函数仅启动监听/轮询，不会立即拉取。
+ * 需要立即拉取的页面应自行调用 loadOrdersFromCloud()。
+ */
 export function startChefOrdersSync(owner = 'default') {
   if (owner) {
     chefOrdersSyncOwners.add(owner)
   }
-  syncChefOrdersFromCloud()
+
+  const watchStarted = startOrderRealtimeSync(owner)
+
   if (!chefOrdersPollTimer) {
-    chefOrdersPollTimer = setInterval(syncChefOrdersFromCloud, CHEF_ORDERS_POLL_INTERVAL)
+    // watch 成功时用 5 分钟长间隔兜底；失败时保持 15 秒短间隔
+    const interval = watchStarted ? CHEF_ORDERS_POLL_FALLBACK_INTERVAL : CHEF_ORDERS_POLL_INTERVAL
+    chefOrdersPollTimer = setInterval(syncChefOrdersFromCloud, interval)
+    console.log(`[Store] 主厨订单同步已启动, watch=${watchStarted}, 轮询间隔=${interval / 1000}秒`)
   }
 }
 
@@ -1066,6 +1091,7 @@ export function stopChefOrdersSync(owner = 'default') {
     chefOrdersSyncOwners.delete(owner)
     if (chefOrdersSyncOwners.size > 0) return
   }
+  stopOrderRealtimeSync(owner)
   if (chefOrdersPollTimer) {
     clearInterval(chefOrdersPollTimer)
     chefOrdersPollTimer = null
@@ -1077,6 +1103,79 @@ export function stopChefOrdersSync(owner = 'default') {
 /**
  * 从云端加载订单到 store
  */
+/**
+ * 将云端订单数据合并到 store.orders 中。
+ * 共用于 loadOrdersFromCloud（轮询）和 watchOrders 实时回调。
+ * @param {Array} cloudOrders 云端返回的订单文档数组
+ */
+function mergeCloudOrderDocs(cloudOrders) {
+  const roomId = normalizeRoomId(store.roomId)
+  if (!roomId || !Array.isArray(cloudOrders)) return
+
+  const localMap = {}
+  store.orders.forEach(o => { localMap[o.id] = o })
+
+  cloudOrders.forEach(co => {
+    const cloudRoomId = normalizeOrderRoomId(co) || roomId
+    if (cloudRoomId !== roomId) return
+    const localId = co.id || co._id
+
+    // 跳过正在操作中的订单，避免覆盖乐观更新
+    if (pendingOperations.has(localId)) {
+      console.log('[Store] 跳过合并（操作锁中）:', localId)
+      return
+    }
+
+    if (localMap[localId]) {
+      const local = localMap[localId]
+      // 检测催单通知（仅主厨端关心）
+      if (store.currentRole === 'chef') {
+        const oldRushCount = local.rushCount || 0
+        const newRushCount = co.rushCount || 0
+        if (newRushCount > oldRushCount) {
+          // 有新催单！推入通知队列
+          enqueueRushNotification({
+            orderId: localId,
+            orderShortId: localId.slice(-6),
+            rushCount: newRushCount,
+            rushTime: co.rushLastTime || new Date().toISOString(),
+            items: (local.items || co.items || []).map(i => i.name).slice(0, 3).join('、'),
+            timestamp: Date.now(),
+          })
+        }
+      }
+
+      // 状态优先级保护：只允许前进，不允许回退
+      const cloudPriority = STATUS_PRIORITY[co.status] ?? -1
+      const localPriority = STATUS_PRIORITY[local.status] ?? -1
+      const mergedStatus = cloudPriority >= localPriority ? co.status : local.status
+
+      // 更新本地记录的云端字段
+      Object.assign(local, {
+        roomId,
+        _cloudId: co._id,
+        status: mergedStatus,
+        acceptedAt: cloudPriority >= 1 ? (co.acceptedAt || local.acceptedAt) : local.acceptedAt,
+        cookingAt: cloudPriority >= 2 ? (co.cookingAt || local.cookingAt) : local.cookingAt,
+        completedAt: cloudPriority >= 3 ? (co.completedAt || local.completedAt) : local.completedAt,
+        rushLastTime: co.rushLastTime || null,
+        rushCount: co.rushCount || 0,
+        riskWarnings: Array.isArray(co.riskWarnings)
+          ? co.riskWarnings
+          : (Array.isArray(local.riskWarnings) ? local.riskWarnings : []),
+        riskCheckedAt: co.riskCheckedAt || local.riskCheckedAt || null,
+      })
+    } else {
+      // 云端有但本地没有，添加到本地
+      store.orders.push({
+        ...co,
+        roomId,
+        _cloudId: co._id,
+      })
+    }
+  })
+}
+
 export async function loadOrdersFromCloud() {
   ensureOrdersForCurrentRoom()
   const roomId = normalizeRoomId(store.roomId)
@@ -1089,70 +1188,7 @@ export async function loadOrdersFromCloud() {
   try {
     const cloudOrders = await cloudFetchOrders(roomId)
     if (cloudOrders !== null) {
-      // 云端有数据，合并本地
-      const localMap = {}
-      store.orders.forEach(o => { localMap[o.id] = o })
-
-      cloudOrders.forEach(co => {
-        const cloudRoomId = normalizeOrderRoomId(co) || roomId
-        if (cloudRoomId !== roomId) return
-        const localId = co.id || co._id
-
-        // 跳过正在操作中的订单，避免覆盖乐观更新
-        if (pendingOperations.has(localId)) {
-          console.log('[Store] 跳过合并（操作锁中）:', localId)
-          return
-        }
-
-        if (localMap[localId]) {
-          const local = localMap[localId]
-          // 检测催单通知（仅主厨端关心）
-          if (store.currentRole === 'chef') {
-            const oldRushCount = local.rushCount || 0
-            const newRushCount = co.rushCount || 0
-            if (newRushCount > oldRushCount) {
-              // 有新催单！推入通知队列
-              enqueueRushNotification({
-                orderId: localId,
-                orderShortId: localId.slice(-6),
-                rushCount: newRushCount,
-                rushTime: co.rushLastTime || new Date().toISOString(),
-                items: (local.items || co.items || []).map(i => i.name).slice(0, 3).join('、'),
-                timestamp: Date.now(),
-              })
-            }
-          }
-
-          // 状态优先级保护：只允许前进，不允许回退
-          const cloudPriority = STATUS_PRIORITY[co.status] ?? -1
-          const localPriority = STATUS_PRIORITY[local.status] ?? -1
-          const mergedStatus = cloudPriority >= localPriority ? co.status : local.status
-
-          // 更新本地记录的云端字段
-          Object.assign(local, {
-            roomId,
-            _cloudId: co._id,
-            status: mergedStatus,
-            acceptedAt: cloudPriority >= 1 ? (co.acceptedAt || local.acceptedAt) : local.acceptedAt,
-            cookingAt: cloudPriority >= 2 ? (co.cookingAt || local.cookingAt) : local.cookingAt,
-            completedAt: cloudPriority >= 3 ? (co.completedAt || local.completedAt) : local.completedAt,
-            rushLastTime: co.rushLastTime || null,
-            rushCount: co.rushCount || 0,
-            riskWarnings: Array.isArray(co.riskWarnings)
-              ? co.riskWarnings
-              : (Array.isArray(local.riskWarnings) ? local.riskWarnings : []),
-            riskCheckedAt: co.riskCheckedAt || local.riskCheckedAt || null,
-          })
-        } else {
-          // 云端有但本地没有，添加到本地
-          store.orders.push({
-            ...co,
-            roomId,
-            _cloudId: co._id,
-          })
-        }
-      })
-
+      mergeCloudOrderDocs(cloudOrders)
       persistCurrentRoomOrders()
       refreshUserStats()
       store.ordersLoaded = true
@@ -1162,6 +1198,70 @@ export async function loadOrdersFromCloud() {
   } catch (e) {
     console.error('[Store] 加载订单失败:', e)
     return store.orders
+  }
+}
+
+/**
+ * 启动订单实时同步。
+ * watch 成功时通过 WebSocket 实时推送订单变化，不消耗云函数调用。
+ * watch 失败时返回 false，轮询会继续兜底。
+ */
+export function startOrderRealtimeSync(owner = 'default') {
+  if (!store.roomId || !isCloudAvailable()) return false
+  if (owner) {
+    orderRealtimeOwners.add(owner)
+  }
+
+  // 已经在监听同一房间
+  if (orderRealtimeWatcher && orderRealtimeRoomId === store.roomId) {
+    return true
+  }
+
+  closeOrderRealtimeWatcher()
+  orderRealtimeRoomId = store.roomId
+
+  orderRealtimeWatcher = cloudWatchOrders(
+    store.roomId,
+    (docs) => {
+      const seq = ++orderRealtimeSeq
+      try {
+        ensureOrdersForCurrentRoom()
+        mergeCloudOrderDocs(docs)
+        if (seq === orderRealtimeSeq) {
+          persistCurrentRoomOrders()
+          refreshUserStats()
+          store.ordersLoaded = true
+        }
+      } catch (e) {
+        console.warn('[Store] 订单实时同步处理失败:', e)
+      }
+    },
+    (error) => {
+      console.warn('[Store] 订单监听失败，降级到轮询兜底:', error)
+      closeOrderRealtimeWatcher()
+    }
+  )
+
+  return !!orderRealtimeWatcher
+}
+
+export function stopOrderRealtimeSync(owner = 'default') {
+  if (owner) {
+    orderRealtimeOwners.delete(owner)
+    if (orderRealtimeOwners.size > 0) return
+  }
+  closeOrderRealtimeWatcher()
+}
+
+function closeOrderRealtimeWatcher() {
+  if (!orderRealtimeWatcher) return
+  try {
+    orderRealtimeWatcher.close()
+  } catch (e) {
+    console.warn('[Store] 关闭订单实时监听失败:', e)
+  } finally {
+    orderRealtimeWatcher = null
+    orderRealtimeRoomId = ''
   }
 }
 

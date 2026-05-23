@@ -861,6 +861,43 @@ export function watchRoomMenuVersion(roomId, onChange, onError) {
   }
 }
 
+/**
+ * 实时监听某个房间的订单变化
+ * @param {string} roomId 房间号
+ * @param {(orders: Array, snapshot: Object) => void} onChange
+ * @param {(error: Error) => void} onError
+ * @returns {Object|null} watcher，调用 close() 关闭
+ */
+export function watchOrders(roomId, onChange, onError) {
+  if (!isCloudAvailable() || !cloudInited) {
+    return null
+  }
+
+  try {
+    const db = getDB()
+    roomId = normalizeRoomId(roomId)
+    if (!db || !roomId) return null
+
+    return db.collection('orders')
+      .where({ roomId })
+      .orderBy('createdAt', 'desc')
+      .watch({
+        onChange(snapshot) {
+          const docs = Array.isArray(snapshot.docs) ? snapshot.docs : []
+          onChange?.(docs, snapshot)
+        },
+        onError(error) {
+          console.error('[Cloud] 订单实时监听失败:', error)
+          onError?.(error)
+        },
+      })
+  } catch (e) {
+    console.error('[Cloud] 启动订单实时监听失败:', e)
+    onError?.(e)
+    return null
+  }
+}
+
 async function touchRoomMenuVersion(roomId) {
   roomId = normalizeRoomId(roomId)
   if (!roomId || !isCloudAvailable() || !cloudInited) return
@@ -1627,7 +1664,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '使用新鲜空运奶油草莓，搭配低糖动物奶油千层酥底。一口咬下去满满幸福感，绝对不会长胖哦～',
     category: 'hot',
     emoji: '🍓',
-    image: '/static/food1.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: ['少少糖', '正常甜', '多多甜'],
@@ -1640,7 +1677,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '精选宇治抹茶，搭配绵密厚乳沫，入口即化。清新中带着一丝甜蜜，仿佛行走在京都的茶园间～',
     category: 'drink',
     emoji: '🍵',
-    image: '/static/food2.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: ['无糖', '微糖', '正常甜'],
@@ -1653,7 +1690,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '精选台农芒果搭配浓郁椰奶和Q弹西米，每一口都是热带阳光的味道，满满的水果鲜甜～',
     category: 'dessert',
     emoji: '🥭',
-    image: '/static/food3.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: ['少少糖', '正常甜', '多多甜'],
@@ -1666,7 +1703,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '手工现蒸芋泥，搭配新鲜牛奶和Q弹黑糖珍珠。每一口都是软糯的幸福感，超级治愈～',
     category: 'drink',
     emoji: '🧋',
-    image: '/static/food4.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: ['无糖', '三分糖', '正常甜'],
@@ -1679,7 +1716,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '水蜜桃果肉搭配高山乌龙茶汤，清新解腻又甜蜜。午后来一杯，好心情加倍～',
     category: 'drink',
     emoji: '🍑',
-    image: '/static/food5.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: ['无糖', '微糖', '正常甜'],
@@ -1692,7 +1729,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '手指饼干蘸取浓缩咖啡，层叠马斯卡彭芝士，撒上可可粉。一口一个天堂～',
     category: 'dessert',
     emoji: '🍰',
-    image: '/static/food6.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: ['少少糖', '正常甜', '多多甜'],
@@ -1705,7 +1742,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '特制日式酱汁炒制Q弹乌冬面，搭配新鲜蔬菜和温泉蛋。碳水快乐就是这么简单～',
     category: 'carb',
     emoji: '🍜',
-    image: '/static/food7.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: [],
@@ -1718,7 +1755,7 @@ const DEFAULT_MENU_ITEMS = [
     fullDesc: '新鲜牛油果搭配藜麦、鸡胸肉和时令蔬菜，淋上特制油醋汁。好吃不长胖，越吃越美丽～',
     category: 'light',
     emoji: '🥗',
-    image: '/static/food8.jpg',
+    image: '',
     price: '免费',
     available: true,
     sweetOptions: [],
@@ -2094,7 +2131,7 @@ export async function seedMenuData(roomId) {
     for (const item of DEFAULT_MENU_ITEMS) {
       let cloudImageId = item.image
 
-      // 如果是本地路径，尝试上传到云存储
+      // 如果是本地路径，尝试上传到云存储（空图片则跳过）
       if (item.image && item.image.startsWith('/static/')) {
         try {
           const uploaded = await uploadImageToCloud(item.image, `menu-images/${roomId || 'default'}`)

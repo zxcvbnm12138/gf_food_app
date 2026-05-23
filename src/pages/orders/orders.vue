@@ -18,7 +18,7 @@
       </view>
     </view>
 
-    <scroll-view class="orders-scroll" scroll-y :enhanced="true" :show-scrollbar="false">
+    <scroll-view class="orders-scroll" scroll-y :enhanced="true" :show-scrollbar="false" refresher-enabled :refresher-triggered="refreshing" @refresherrefresh="onPullRefresh">
       <view class="content">
         <view class="heatmap-section" @touchstart="onHeatmapTouchStart" @touchend="onHeatmapTouchEnd">
           <view class="month-row">
@@ -156,12 +156,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { onShow, onHide } from '@dcloudio/uni-app'
+import { onShow } from '@dcloudio/uni-app'
 import { loadOrdersFromCloud, getCurrentRoomOrders, getRushCooldownRemaining, rushOrderAction, formatOrderItemOptions } from '@/store/index.js'
 import TabBar from '@/components/TabBar.vue'
 
 const weekDays = ['日', '一', '二', '三', '四', '五', '六']
 const touchStartX = ref(0)
+const refreshing = ref(false)
 
 const toDateKey = (date) => {
   const year = date.getFullYear()
@@ -180,40 +181,19 @@ const initialDate = sortedOrders.value[0] ? new Date(sortedOrders.value[0].creat
 const activeMonth = ref(new Date(initialDate.getFullYear(), initialDate.getMonth(), 1))
 const selectedDate = ref(toDateKey(initialDate))
 
-// 云端订单轮询，实时同步主厨端的状态更新
-let pollTimer = null
-const refreshOrders = async () => {
+const onPullRefresh = async () => {
+  refreshing.value = true
   try {
     await loadOrdersFromCloud()
   } catch (e) {
     console.warn('[CustomerOrders] 刷新订单失败', e)
-  }
-}
-
-const startPolling = () => {
-  refreshOrders()
-  if (!pollTimer) {
-    pollTimer = setInterval(refreshOrders, 5000)
-  }
-}
-
-const stopPolling = () => {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+  } finally {
+    refreshing.value = false
   }
 }
 
 onShow(() => {
-  startPolling()
-})
-
-onHide(() => {
-  stopPolling()
-})
-
-onUnmounted(() => {
-  stopPolling()
+  loadOrdersFromCloud()
 })
 
 const monthLabel = computed(() => {

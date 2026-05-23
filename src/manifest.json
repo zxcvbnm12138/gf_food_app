@@ -59,7 +59,8 @@
             "postcss": true
         },
         "usingComponents": true,
-        "cloudfunctionRoot": "cloudfunctions/"
+        "cloudfunctionRoot": "cloudfunctions/",
+        "__usePrivacyCheck__": true
     },
     "mp-alipay": {
         "usingComponents": true

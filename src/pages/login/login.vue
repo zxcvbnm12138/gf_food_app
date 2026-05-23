@@ -438,6 +438,8 @@ const selectRole = async (role) => {
   uni.showLoading({ title: '检查菜单...', mask: true })
   try {
     const url = await getChefEntryUrl({ forceRefresh: true })
+    // 在页面跳转前关闭 loading，避免跳转后 toast 丢失导致 hideLoading 报错
+    uni.hideLoading()
     if (url === '/pages/chef/menu-init') {
       uni.redirectTo({ url })
     } else {
@@ -445,9 +447,9 @@ const selectRole = async (role) => {
     }
   } catch (e) {
     console.warn('进入主厨端前检查菜单失败:', e)
+    uni.hideLoading()
     uni.switchTab({ url: '/pages/chef/dashboard' })
   } finally {
-    uni.hideLoading()
     isSelectingRole.value = false
   }
 }

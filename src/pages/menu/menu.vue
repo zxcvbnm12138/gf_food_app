@@ -39,7 +39,7 @@
       </scroll-view>
 
       <!-- 右侧菜单列表 -->
-      <scroll-view class="right-content" scroll-y :enhanced="true" :show-scrollbar="false">
+      <scroll-view class="right-content" scroll-y :enhanced="true" :show-scrollbar="false" refresher-enabled :refresher-triggered="isRefreshing" @refresherrefresh="onRefresh">
         <view class="right-inner">
           <text class="list-title">{{ currentCategoryTitle }}</text>
           
@@ -51,7 +51,8 @@
             @click="goDetail(item._id || item.id)"
           >
             <view class="mi-img">
-              <image class="mi-photo" :src="item.image" mode="aspectFill" />
+              <image v-if="item.image" class="mi-photo" :src="item.image" mode="aspectFill" />
+              <text v-else class="mi-photo-emoji">{{ item.emoji || '\ud83c\udf7d\ufe0f' }}</text>
             </view>
             <view class="mi-info">
               <text class="mi-name">{{ item.name }}</text>
@@ -116,6 +117,7 @@ const searchInputFocus = ref(false)
 const searchText = ref('')
 const activeCatIndex = ref(0)
 const showAddToast = ref(false)
+const isRefreshing = ref(false)
 const MENU_REALTIME_OWNER = 'customer-menu'
 
 // 只显示上架的菜品
@@ -136,6 +138,18 @@ const MENU_FALLBACK_POLL_INTERVAL = 60 * 1000 // 实时监听主同步，低频�
 
 const refreshMenu = async () => {
   await loadMenuSnapshotFromCloud()
+}
+
+const onRefresh = async () => {
+  isRefreshing.value = true
+  try {
+    await refreshMenu()
+    uni.showToast({ title: '已刷新', icon: 'none', duration: 1000 })
+  } catch (e) {
+    console.warn('[CustomerMenu] 下拉刷新失败', e)
+  } finally {
+    isRefreshing.value = false
+  }
 }
 
 const selectCategoryById = (categoryId) => {
@@ -171,12 +185,15 @@ onLoad((options = {}) => {
   }
 })
 
-// onShow: 每次页面可见时立即刷新 + 启动轮询
+// onShow: 启动实时监听 + 兜底轮询
 onShow(() => {
   applyPendingCategory()
   applyPendingSearchFocus()
-  refreshMenu()
-  startMenuRealtimeSync(MENU_REALTIME_OWNER)
+  // watch 首次回调已包含最新数据，仅 watch 不可用时显式 fetch
+  const watchStarted = startMenuRealtimeSync(MENU_REALTIME_OWNER)
+  if (!watchStarted) {
+    refreshMenu()
+  }
   if (!menuPollTimer) {
     menuPollTimer = setInterval(refreshMenu, MENU_FALLBACK_POLL_INTERVAL)
   }
@@ -458,6 +475,15 @@ const goBack = () => {
   width: 100%;
   height: 100%;
   transition: transform 0.3s ease;
+}
+
+.mi-photo-emoji {
+  font-size: 56rpx;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .menu-item:active .mi-photo {

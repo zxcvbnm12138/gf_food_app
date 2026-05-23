@@ -270,7 +270,7 @@ const refreshInsightOrders = async () => {
   }
 }
 
-// 页面显示时加载云端菜品 + 启动轮询
+// 页面显示时加载菜品 + 启动同步
 onShow(() => {
   // 登录态检查
   const loginData = checkLogin()
@@ -283,10 +283,13 @@ onShow(() => {
     uni.reLaunch({ url: '/pages/login/login' })
     return
   }
-  // 每次页面可见时刷新菜品
-  refreshMenu()
+  // 启动实时监听；watch 首次回调已包含最新数据，无需额外 fetch
+  // 仅在 watch 不可用（H5 等环境）时用显式 fetch 兜底
+  const watchStarted = startMenuRealtimeSync(MENU_REALTIME_OWNER)
+  if (!watchStarted) {
+    refreshMenu()
+  }
   refreshInsights()
-  startMenuRealtimeSync(MENU_REALTIME_OWNER)
   if (!menuPollTimer) {
     menuPollTimer = setInterval(refreshMenu, MENU_FALLBACK_POLL_INTERVAL)
   }

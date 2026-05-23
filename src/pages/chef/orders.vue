@@ -13,7 +13,7 @@
       </view>
     </view>
     <!-- 订单列表 -->
-    <scroll-view class="order-scroll" scroll-y :enhanced="true" :show-scrollbar="false">
+    <scroll-view class="order-scroll" scroll-y :enhanced="true" :show-scrollbar="false" :refresher-enabled="true" :refresher-triggered="isRefreshing" @refresherrefresh="onPullRefresh">
       <view class="order-list" v-if="currentOrders.length > 0">
         <view v-for="(order, idx) in currentOrders" :key="order.id" class="order-card" :style="{ animationDelay: (idx * 0.06) + 's' }">
           <view class="order-head">
@@ -54,49 +54,35 @@
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
-import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, loadOrdersFromCloud, formatOrderItemOptions, formatCartRiskWarnings } from '@/store/index.js'
+import { acceptOrder, startCooking, completeOrder, getCurrentRoomOrders, getOrdersByStatus, startChefOrdersSync, stopChefOrdersSync, loadOrdersFromCloud, formatOrderItemOptions, formatCartRiskWarnings } from '@/store/index.js'
 import ChefTabBar from '@/components/ChefTabBar.vue'
 const activeTab = ref(0)
+const isRefreshing = ref(false)
 
-// 页面显示时刷新云端订单 + 轮询
-let pollTimer = null
-const refreshOrders = async () => {
+// onShow: 启动实时同步 + 立即拉取一次
+onShow(() => {
+  startChefOrdersSync('chef-orders')
+  loadOrdersFromCloud().catch(() => {})
+})
+
+// onHide: 停止同步，释放 watch 连接
+onHide(() => {
+  stopChefOrdersSync('chef-orders')
+})
+
+// 下拉刷新
+const onPullRefresh = async () => {
+  isRefreshing.value = true
   try {
     await loadOrdersFromCloud()
   } catch (e) {
-    console.warn('[ChefOrders] 刷新订单失败', e)
+    console.warn('[ChefOrders] 下拉刷新失败', e)
+  } finally {
+    isRefreshing.value = false
   }
 }
-
-const startPolling = () => {
-  refreshOrders()
-  if (!pollTimer) {
-    pollTimer = setInterval(refreshOrders, 5000)
-  }
-}
-
-const stopPolling = () => {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-// onShow: 每次页面可见时立即刷新 + 启动轮询
-onShow(() => {
-  startPolling()
-})
-
-// onHide: 页面隐藏时停止轮询
-onHide(() => {
-  stopPolling()
-})
-
-onUnmounted(() => {
-  stopPolling()
-})
 const allOrders = computed(() => getCurrentRoomOrders())
 const pendingOrders = computed(() => getOrdersByStatus('pending'))
 const inProgressOrders = computed(() => [...getOrdersByStatus('accepted'), ...getOrdersByStatus('cooking')].sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)))

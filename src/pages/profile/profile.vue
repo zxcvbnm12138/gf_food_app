@@ -218,7 +218,6 @@ import store, {
   clearRole,
   clearLoginState,
   clearRoomId,
-  loadOrdersFromCloud,
   refreshUserStats,
   getChefEntryUrl,
   clearCurrentRoomOrdersData,
@@ -256,16 +255,12 @@ onShow(async () => {
   await loadCurrentRoomUserPreferences().catch((e) => {
     console.warn('[Profile] 刷新房间偏好失败', e)
   })
+  // 三项统计（投喂次数、可用特权、收藏菜品）均从本地 store 计算，无需重新拉取订单
   refreshUserStats()
   loadCustomCouponsFromCloud()
     .then(() => refreshUserStats())
     .catch((e) => {
       console.warn('[Profile] 刷新云端特权失败', e)
-    })
-  loadOrdersFromCloud()
-    .then(() => refreshUserStats())
-    .catch((e) => {
-      console.warn('[Profile] 刷新真实统计失败', e)
     })
 })
 

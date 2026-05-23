@@ -11,7 +11,7 @@
       <input class="search-input" v-model="searchText" placeholder="搜索菜品..." />
     </view>
     <!-- 菜品列表 -->
-    <scroll-view class="menu-scroll" scroll-y :enhanced="true" :show-scrollbar="false" @scrolltolower="onScrollBottom">
+    <scroll-view class="menu-scroll" scroll-y :enhanced="true" :show-scrollbar="false" @scrolltolower="onScrollBottom" refresher-enabled :refresher-triggered="isRefreshing" @refresherrefresh="onRefresh">
       <view class="menu-list">
         <!-- 加载中状态 -->
         <view v-if="isLoading" class="loading-state">
@@ -37,7 +37,10 @@
             :class="{ swiped: isItemSwiped(item) }"
             @click="handleCardClick(item)"
           >
-            <view class="menu-img"><image class="menu-photo" :src="item.image" mode="aspectFill" /></view>
+            <view class="menu-img">
+              <image v-if="item.image" class="menu-photo" :src="item.image" mode="aspectFill" />
+              <text v-else class="menu-photo-emoji">{{ item.emoji || '🍽️' }}</text>
+            </view>
             <view class="menu-info">
               <view class="menu-top-row">
                 <text class="menu-name">{{ item.name }}</text>
@@ -75,7 +78,10 @@
 
         <!-- 菜品头部（编辑模式） -->
         <view v-if="!isNewItem" class="edit-item-head">
-          <image class="edit-photo" :src="editForm.imagePreview || editForm.image" mode="aspectFill" />
+          <image v-if="editForm.imagePreview || editForm.image" class="edit-photo" :src="editForm.imagePreview || editForm.image" mode="aspectFill" />
+          <view v-else class="edit-photo edit-photo-placeholder">
+            <text class="menu-photo-emoji">{{ editForm.emoji || '🍽️' }}</text>
+          </view>
           <view class="edit-head-info">
             <text class="edit-name">{{ editForm.name }}</text>
             <text class="edit-cat">{{ getCatName(editForm.category) }}</text>
@@ -237,6 +243,7 @@ const showEdit = ref(false)
 const isNewItem = ref(false)
 const isSaving = ref(false)
 const isLoading = ref(false)
+const isRefreshing = ref(false)
 const isUploading = ref(false)
 const isCreatingCategory = ref(false)
 const showCategoryCreator = ref(false)
@@ -418,6 +425,7 @@ const openAdd = () => {
     dislikeKeywordsStr: '',
     allergyKeywordsStr: '',
     category: catOptions.value[0]?.id || 'hot',
+    emoji: '🍽️',
     image: '',
     imagePreview: '',
     available: true,
@@ -446,6 +454,7 @@ const openEdit = (item) => {
     dislikeKeywordsStr: toKeywordString(item.dislikeKeywords),
     allergyKeywordsStr: toKeywordString(item.allergyKeywords),
     category: item.category,
+    emoji: item.emoji || '🍽️',
     image: item._cloudImageId || item.image || '',
     imagePreview: item.image || item._cloudImageId || '',
     available: item.available !== false,
@@ -579,6 +588,21 @@ const confirmSwipeDelete = (item) => {
   deleteMenuItemWithConfirm(getItemKey(item), item.name)
 }
 
+const onRefresh = async () => {
+  isRefreshing.value = true
+  try {
+    await Promise.all([
+      loadMenuFromCloud(),
+      loadMenuCategoriesFromCloud(),
+    ])
+    uni.showToast({ title: '已刷新', icon: 'none', duration: 1000 })
+  } catch (e) {
+    console.warn('[ChefMenu] 下拉刷新失败', e)
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
 const onScrollBottom = () => { /* future: pagination */ }
 
 const selectCategory = (cat) => {
@@ -692,8 +716,12 @@ const chooseAndUploadImage = () => {
         if (fileID) {
           editForm.value.image = fileID
           editForm.value.imagePreview = tempPath
-          // 在小程序中 fileID 可以直接用于 image 组件显示
           uni.showToast({ title: '图片上传成功 ✅', icon: 'none' })
+        } else if (!isCloudAvailable()) {
+          // H5 降级：使用本地路径
+          editForm.value.image = tempPath
+          editForm.value.imagePreview = tempPath
+          uni.showToast({ title: '已使用本地图片', icon: 'none' })
         } else {
           editForm.value.image = previousImage
           editForm.value.imagePreview = previousPreview
@@ -743,6 +771,8 @@ const chooseAndUploadImage = () => {
 .menu-card.swiped:active { transform: translateX(-148rpx); }
 .menu-img { width: 140rpx; height: 140rpx; border-radius: 20rpx; overflow: hidden; flex-shrink: 0; background: #FFF7E6; }
 .menu-photo { width: 100%; height: 100%; }
+.menu-photo-emoji { font-size: 56rpx; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.edit-photo-placeholder { display: flex; align-items: center; justify-content: center; background: #FFF7E6; }
 .menu-info { flex: 1; min-width: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; min-height: 140rpx; }
 .menu-top-row { display: flex; justify-content: space-between; align-items: center; gap: 16rpx; min-width: 0; }
 .menu-name { flex: 1; min-width: 0; font-size: 30rpx; font-weight: bold; color: #1D2129; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
