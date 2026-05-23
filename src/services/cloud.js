@@ -1030,6 +1030,24 @@ export async function resolveMenuImages(items) {
   return items
 }
 
+export async function resolveRecipePhotos(photos) {
+  if (!Array.isArray(photos) || photos.length === 0) return photos
+  if (!isCloudAvailable() || !cloudInited) return photos
+
+  const cloudFileIDs = photos.filter(img => img && img.startsWith('cloud://'))
+  if (cloudFileIDs.length === 0) return photos
+
+  const uniqueIds = [...new Set(cloudFileIDs)]
+  const urlMap = await getTempImageUrls(uniqueIds)
+
+  for (let i = 0; i < photos.length; i++) {
+    const photo = photos[i]
+    if (photo && urlMap[photo]) photos[i] = urlMap[photo]
+  }
+
+  return photos
+}
+
 /**
  * 迁移已有云数据库中的本地图片路径到云存储
  * 扫描所有 image 字段为 /static/ 开头的记录，上传到云存储并更新数据库
@@ -1433,6 +1451,308 @@ function normalizeCoupons(coupons) {
   return (Array.isArray(coupons) ? coupons : [])
     .map(normalizeCoupon)
     .filter(Boolean)
+}
+
+function normalizeRecipeList(value, maxItems = 80, maxLength = 300) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[\n,，、;；]/)
+
+  return source
+    .map(item => String(item || '').trim().slice(0, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
+function normalizeRecipePhotos(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 9)
+}
+
+function normalizeRecipeVideoUrl(value) {
+  const url = String(value || '').trim()
+  return /^https?:\/\//i.test(url) ? url.slice(0, 500) : ''
+}
+
+export function normalizeRecipe(recipe) {
+  if (!recipe || typeof recipe !== 'object') return null
+  const title = String(recipe.title || '').trim().slice(0, 80)
+  if (!title) return null
+
+  return {
+    ...recipe,
+    _id: recipe._id || recipe.id || '',
+    title,
+    materials: normalizeRecipeList(recipe.materials, 80, 160),
+    process: normalizeRecipeList(recipe.process, 120, 300),
+    videoUrl: normalizeRecipeVideoUrl(recipe.videoUrl),
+    photos: normalizeRecipePhotos(recipe.photos),
+    roomId: normalizeRoomId(recipe.roomId || ''),
+    creatorOpenid: String(recipe.creatorOpenid || '').trim(),
+    createdAt: recipe.createdAt || '',
+    updatedAt: recipe.updatedAt || recipe.createdAt || '',
+  }
+}
+
+function normalizeRecipes(recipes) {
+  return (Array.isArray(recipes) ? recipes : [])
+    .map(normalizeRecipe)
+    .filter(Boolean)
+    .sort((a, b) => {
+      const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime() || 0
+      const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime() || 0
+      return bTime - aTime
+    })
+}
+
+function buildRecipeWriteFields(data) {
+  const recipe = normalizeRecipe(data)
+  if (!recipe) return null
+  return {
+    title: recipe.title,
+    materials: recipe.materials,
+    process: recipe.process,
+    videoUrl: recipe.videoUrl,
+    photos: recipe.photos,
+  }
+}
+
+export async function fetchRecipes(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return []
+  }
+
+  if (!roomId) return []
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'getRecipes',
+      data: { roomId },
+    })
+    if (res.result && res.result.success && Array.isArray(res.result.recipes)) {
+      return normalizeRecipes(res.result.recipes)
+    }
+    if (isCloudAccessDeniedResult(res.result)) return []
+    console.warn('[Cloud] 云函数获取菜谱返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数 getRecipes 调用失败，尝试直接查询:', e.message || e)
+  }
+
+  try {
+    const login = checkLogin()
+    const openid = String(login?.openid || '').trim()
+    if (!openid) return []
+
+    const db = getDB()
+    let countRes
+    try {
+      countRes = await db.collection('recipes').where({ roomId, creatorOpenid: openid }).count()
+    } catch (countErr) {
+      if (isCollectionMissingError(countErr)) return []
+      throw countErr
+    }
+
+    if (countRes.total === 0) return []
+
+    const batchTimes = Math.ceil(countRes.total / 20)
+    const tasks = []
+    for (let i = 0; i < batchTimes; i++) {
+      tasks.push(db.collection('recipes')
+        .where({ roomId, creatorOpenid: openid })
+        .skip(i * 20)
+        .limit(20)
+        .get())
+    }
+    const results = await Promise.all(tasks)
+    return normalizeRecipes(results.reduce((all, result) => all.concat(result.data || []), []))
+  } catch (e) {
+    console.error('[Cloud] 获取菜谱失败:', e)
+    return []
+  }
+}
+
+export async function addRecipe(data, roomId) {
+  roomId = normalizeRoomId(roomId)
+  const recipeFields = buildRecipeWriteFields(data)
+  if (!recipeFields || !roomId) return null
+
+  if (!isCloudAvailable() || !cloudInited) {
+    console.warn('[Cloud] 非云环境，无法新增菜谱')
+    return null
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateRecipe',
+      data: {
+        action: 'add',
+        updateFields: recipeFields,
+        roomId,
+      },
+    })
+    if (res.result && res.result.success && res.result._id) {
+      return res.result._id
+    }
+    if (isCloudAccessDeniedResult(res.result)) return null
+    console.warn('[Cloud] 云函数新增菜谱返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数新增菜谱失败，尝试直接新增:', e.message || e)
+  }
+
+  try {
+    const login = checkLogin()
+    const openid = String(login?.openid || '').trim()
+    if (!openid) return null
+
+    const now = new Date()
+    const res = await addCloudDbDoc('recipes', {
+      ...recipeFields,
+      roomId,
+      creatorOpenid: openid,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return res._id
+  } catch (e) {
+    console.error('[Cloud] 新增菜谱失败:', e)
+    return null
+  }
+}
+
+export async function updateRecipe(id, data, roomId) {
+  roomId = normalizeRoomId(roomId)
+  const recipeFields = buildRecipeWriteFields(data)
+  if (!id || !recipeFields) return false
+
+  if (!isCloudAvailable() || !cloudInited) {
+    console.warn('[Cloud] 非云环境，无法更新菜谱')
+    return false
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateRecipe',
+      data: {
+        action: 'update',
+        cloudId: id,
+        updateFields: recipeFields,
+        roomId: roomId || '',
+      },
+    })
+    if (res.result && res.result.success) {
+      return true
+    }
+    if (isCloudAccessDeniedResult(res.result)) return false
+    console.warn('[Cloud] 云函数更新菜谱返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数 updateRecipe 调用失败，尝试直接更新:', e.message || e)
+  }
+
+  try {
+    const login = checkLogin()
+    const openid = String(login?.openid || '').trim()
+    if (!openid) return false
+
+    const db = getDB()
+    const current = await db.collection('recipes').doc(id).get()
+    const currentRoomId = normalizeRoomId(current.data?.roomId || roomId)
+    if (!currentRoomId || (roomId && currentRoomId !== roomId)) return false
+    if (String(current.data?.creatorOpenid || '').trim() !== openid) return false
+
+    await db.collection('recipes').doc(id).update({
+      data: {
+        ...recipeFields,
+        roomId: currentRoomId,
+        updatedAt: new Date(),
+      },
+    })
+    return true
+  } catch (e) {
+    console.error('[Cloud] 更新菜谱失败:', e)
+    return false
+  }
+}
+
+export async function deleteRecipe(id, roomId) {
+  roomId = normalizeRoomId(roomId)
+  if (!id) return false
+
+  if (!isCloudAvailable() || !cloudInited) {
+    console.warn('[Cloud] 非云环境，无法删除菜谱')
+    return false
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateRecipe',
+      data: {
+        action: 'delete',
+        cloudId: id,
+        roomId: roomId || '',
+      },
+    })
+    if (res.result && res.result.success) {
+      return true
+    }
+    if (isCloudAccessDeniedResult(res.result)) return false
+    console.warn('[Cloud] 云函数删除菜谱返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数删除菜谱失败，尝试直接删除:', e.message || e)
+  }
+
+  try {
+    const login = checkLogin()
+    const openid = String(login?.openid || '').trim()
+    if (!openid) return false
+
+    const db = getDB()
+    const current = await db.collection('recipes').doc(id).get()
+    const currentRoomId = normalizeRoomId(current.data?.roomId || roomId)
+    if (!currentRoomId || (roomId && currentRoomId !== roomId)) return false
+    if (String(current.data?.creatorOpenid || '').trim() !== openid) return false
+
+    await db.collection('recipes').doc(id).remove()
+    return true
+  } catch (e) {
+    console.error('[Cloud] 删除菜谱失败:', e)
+    return false
+  }
+}
+
+export async function deleteRecipesByRoom(roomId) {
+  roomId = normalizeRoomId(roomId)
+
+  if (!isCloudAvailable() || !cloudInited) {
+    return true
+  }
+
+  if (!roomId) {
+    console.warn('[Cloud] 缺少 roomId，无法清空房间菜谱')
+    return false
+  }
+
+  try {
+    const res = await wx.cloud.callFunction({
+      name: 'updateRecipe',
+      data: {
+        action: 'deleteByRoom',
+        roomId,
+      },
+    })
+    if (res.result && res.result.success) {
+      return true
+    }
+    if (isCloudAccessDeniedResult(res.result)) return false
+    console.warn('[Cloud] 云函数清空房间菜谱返回失败:', res.result?.message)
+  } catch (e) {
+    console.warn('[Cloud] 云函数清空房间菜谱失败，尝试直接删除:', e.message || e)
+  }
+
+  return deleteCollectionDocsByRoom('recipes', roomId)
 }
 
 export async function fetchCustomCoupons(roomId) {

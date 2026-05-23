@@ -42,6 +42,11 @@
             <text class="action-label">菜品管理</text>
             <view class="action-chevron"></view>
           </view>
+          <view class="action-card" @click="goRecipes">
+            <view class="action-icon-bg recipe-bg"><text class="action-emoji">📖</text></view>
+            <text class="action-label">菜谱管理</text>
+            <view class="action-chevron"></view>
+          </view>
         </view>
         <!-- 设置 -->
         <text class="section-title" style="margin-top: 16rpx;">更多</text>
@@ -71,6 +76,7 @@ const onChooseAvatar = (e) => { const url = e.detail?.avatarUrl; if (url) update
 const switchToCustomer = () => { setRole('customer'); uni.switchTab({ url: '/pages/index/index' }) }
 const goOrders = () => uni.switchTab({ url: '/pages/chef/orders' })
 const goMenu = () => uni.switchTab({ url: '/pages/chef/menu-manage' })
+const goRecipes = () => uni.navigateTo({ url: '/pages/chef/recipe-manage' })
 const showAbout = () => { uni.showModal({ title: '💝 关于投喂小厨房', content: '这是专属于你们的投喂小厨房～ 主厨端帮你管理订单和菜品，用心做的每一道菜，都是爱她的方式 ❤️', showCancel: false, confirmText: '好哒！', confirmColor: '#4080FF' }) }
 const clearHistory = () => {
   uni.showModal({
@@ -125,6 +131,7 @@ const doLogout = () => { clearLoginState(); clearRole(); uni.reLaunch({ url: '/p
 .customer-bg { background: #FFF1F0; }
 .orders-bg { background: #E8F3FF; }
 .menu-bg { background: #FFF7E6; }
+.recipe-bg { background: #F3E8FF; }
 .action-emoji { font-size: 40rpx; }
 .action-label { flex: 1; font-size: 28rpx; color: #4E5969; font-weight: bold; }
 .action-chevron { width: 18rpx; height: 18rpx; border-top: 4rpx solid #C9CDD4; border-right: 4rpx solid #C9CDD4; transform: rotate(45deg); flex-shrink: 0; }

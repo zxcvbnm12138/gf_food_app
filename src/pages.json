@@ -89,6 +89,13 @@
 			}
 		},
 		{
+			"path": "pages/chef/recipe-manage",
+			"style": {
+				"navigationStyle": "custom",
+				"navigationBarTitleText": "菜谱管理"
+			}
+		},
+		{
 			"path": "pages/chef/profile",
 			"style": {
 				"navigationStyle": "custom",

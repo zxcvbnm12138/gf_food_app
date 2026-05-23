@@ -9,6 +9,11 @@ import {
   addCustomCoupon as cloudAddCustomCoupon,
   deleteCustomCoupon as cloudDeleteCustomCoupon,
   redeemCustomCoupon as cloudRedeemCustomCoupon,
+  fetchRecipes as cloudFetchRecipes,
+  addRecipe as cloudAddRecipe,
+  updateRecipe as cloudUpdateRecipe,
+  deleteRecipe as cloudDeleteRecipe,
+  deleteRecipesByRoom as cloudDeleteRecipesByRoom,
   addMenuItem as cloudAddMenuItem,
   updateMenuItem as cloudUpdateMenuItem,
   deleteMenuItem as cloudDeleteMenuItem,
@@ -28,6 +33,8 @@ import {
   setStoredRoomId,
   clearStoredRoomId,
   resolveMenuImages,
+  resolveRecipePhotos,
+  normalizeRecipe,
   uploadImageToCloud as cloudUploadImage,
   resolveImageUrl,
   migrateLocalImagesToCloud,
@@ -400,6 +407,9 @@ const store = reactive({
   // 菜品是否已从云端加载
   menuLoaded: false,
 
+  recipes: [],
+  recipesLoaded: false,
+
   // 订单是否已从云端加载
   ordersLoaded: false,
 
@@ -548,6 +558,10 @@ export function refreshUserStats() {
 function setStoreCoupons(coupons) {
   store.coupons.splice(0, store.coupons.length, ...(Array.isArray(coupons) ? coupons : []))
   refreshUserStats()
+}
+
+function setStoreRecipes(recipes) {
+  store.recipes.splice(0, store.recipes.length, ...(Array.isArray(recipes) ? recipes : []))
 }
 
 export async function loadCustomCouponsFromCloud() {
@@ -702,6 +716,8 @@ export function setRoomId(roomId) {
     store.favoriteItemIds.splice(0, store.favoriteItemIds.length, ...readStoredFavorites(normalizedRoomId))
     store.menuItems = []
     store.menuLoaded = false
+    setStoreRecipes([])
+    store.recipesLoaded = false
     setStoreCategories(getDefaultMenuCategories())
     setStoreCoupons([])
     replaceStoreOrders(readStoredOrders(normalizedRoomId), normalizedRoomId)
@@ -721,6 +737,8 @@ export function clearRoomId() {
   store.roomInfo = null
   store.favoriteItemIds.splice(0, store.favoriteItemIds.length)
   setStoreCoupons([])
+  setStoreRecipes([])
+  store.recipesLoaded = false
   replaceStoreOrders([], '')
   store.ordersLoaded = false
   clearCart()
@@ -994,6 +1012,89 @@ export async function addMenuItemToCloud(data) {
 
 export async function uploadMenuImageToCloud(filePath) {
   const roomDir = store.roomId ? `menu-images/${store.roomId}` : 'menu-images/default'
+  return await cloudUploadImage(filePath, roomDir)
+}
+
+function normalizeRecipeForStore(recipe) {
+  const normalized = normalizeRecipe(recipe)
+  if (!normalized) return null
+  return {
+    ...normalized,
+    _cloudPhotos: Array.isArray(recipe?.photos) ? [...recipe.photos] : [...normalized.photos],
+  }
+}
+
+async function applyCloudRecipes(recipes) {
+  const normalizedRecipes = (Array.isArray(recipes) ? recipes : [])
+    .map(normalizeRecipeForStore)
+    .filter(Boolean)
+
+  for (const recipe of normalizedRecipes) {
+    const displayPhotos = [...recipe.photos]
+    await resolveRecipePhotos(displayPhotos)
+    recipe.photos = displayPhotos
+  }
+
+  setStoreRecipes(normalizedRecipes)
+  store.recipesLoaded = true
+  return store.recipes
+}
+
+export async function loadRecipesFromCloud() {
+  const roomId = normalizeRoomId(store.roomId)
+  if (!roomId) {
+    setStoreRecipes([])
+    store.recipesLoaded = true
+    return store.recipes
+  }
+
+  try {
+    const recipes = await cloudFetchRecipes(roomId)
+    return await applyCloudRecipes(recipes)
+  } catch (e) {
+    console.error('[Store] 加载菜谱失败:', e)
+    return store.recipes
+  }
+}
+
+function toRecipeWriteData(data) {
+  return {
+    ...data,
+    photos: Array.isArray(data?.photos)
+      ? data.photos
+      : Array.isArray(data?._cloudPhotos)
+        ? data._cloudPhotos
+        : [],
+  }
+}
+
+export async function addRecipeToCloud(data) {
+  const id = await cloudAddRecipe(toRecipeWriteData(data), store.roomId)
+  if (id) {
+    await loadRecipesFromCloud()
+  }
+  return id
+}
+
+export async function updateRecipeInCloud(id, data) {
+  const success = await cloudUpdateRecipe(id, toRecipeWriteData(data), store.roomId)
+  if (success) {
+    await loadRecipesFromCloud()
+  }
+  return success
+}
+
+export async function deleteRecipeFromCloud(id) {
+  const success = await cloudDeleteRecipe(id, store.roomId)
+  if (success) {
+    const idx = store.recipes.findIndex(item => item._id === id)
+    if (idx !== -1) store.recipes.splice(idx, 1)
+  }
+  return success
+}
+
+export async function uploadRecipeImageToCloud(filePath) {
+  const roomDir = store.roomId ? `recipe-images/${store.roomId}` : 'recipe-images/default'
   return await cloudUploadImage(filePath, roomDir)
 }
 
@@ -1643,7 +1744,13 @@ export async function clearCurrentRoomAllData() {
     clearCart()
   }
 
-  return ordersCleared && menuCleared
+  const recipesCleared = await cloudDeleteRecipesByRoom(roomId)
+  if (recipesCleared) {
+    setStoreRecipes([])
+    store.recipesLoaded = true
+  }
+
+  return ordersCleared && menuCleared && recipesCleared
 }
 
 export function updateUserAvatar(url) {

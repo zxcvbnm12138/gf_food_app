@@ -1,0 +1,9 @@
+{
+  "name": "getRecipes",
+  "version": "1.0.0",
+  "description": "按房间获取当前用户菜谱的云函数",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}
