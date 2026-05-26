@@ -203,7 +203,7 @@ const aiFormat = async () => {
         model: 'hy3-preview',
         messages: [{
           role: 'user',
-          content: `整理烹饪材料：每行一个，格式“材料名 用量”。没写用量则补常用量。只输出材料列表。
+          content: `整理烹饪材料：每行一个，格式“材料名 用量”。没写用量则补常用量。只输出材料列表。不要额外发挥，只使用用户输入的文本。
 
 用户输入的材料：
 ${text}`,
@@ -424,7 +424,7 @@ const goBack = () => {
 
 <style scoped>
 .page { min-height: 100vh; background: #F7F8FA; display: flex; flex-direction: column; overflow: hidden; }
-.status-bar-p { height: var(--status-bar-height, 44px); width: 100%; background: linear-gradient(180deg, #4080FF 0%, #6AA1FF 100%); }
+.status-bar-p { height: var(--status-bar-height, 44px); width: 100%; background:  #4080FF 0%; }
 .header { background: linear-gradient(180deg, #4080FF 0%, #6AA1FF 100%); padding: 20rpx 32rpx 40rpx; border-bottom-left-radius: 40rpx; border-bottom-right-radius: 40rpx; box-shadow: 0 12rpx 30rpx rgba(64,128,255,0.18); }
 .header-top { display: flex; align-items: center; gap: 24rpx; }
 .back-button, .header-action { width: 68rpx; height: 68rpx; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
